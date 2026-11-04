@@ -2641,6 +2641,7 @@ func (s *BifrostHTTPServer) ReloadPlugin(ctx context.Context, name string, path 
 		routingDecisionPlugin.SetDecisionRequestExecutor(s.Client.DecisionRequest)
 	}
 	s.applyRoutingLogRetention(plugin)
+	s.applyRoutingCaptureDeleteRecorder(plugin)
 	if err := s.SyncLoadedPlugin(ctx, name, plugin, placement, order); err != nil {
 		return err
 	}
@@ -3092,11 +3093,7 @@ func (s *BifrostHTTPServer) RegisterAPIRoutes(ctx context.Context, callbacks Ser
 		s.unsubscribeCaptureDeletes = nil
 	}
 	if loggerPlugin != nil {
-		s.unsubscribeCaptureDeletes = loggerPlugin.SubscribeLogDeleteCallback(func(ctx context.Context, ids []string) {
-			if routingPlugin, err := s.getRoutingPlugin(); err == nil {
-				routingPlugin.ForgetComplexityCapturedRequests(ctx, ids)
-			}
-		})
+		s.unsubscribeCaptureDeletes = loggerPlugin.SubscribeLogDeleteCallback(s.forgetCapturedLogs)
 	}
 	// Read at each sweep rather than once: the cleaner is built in Bootstrap,
 	// after this, and its retention can change at runtime.
@@ -3820,6 +3817,7 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 		routingPlugin.SetResponsesRequestExecutor(s.Client.ResponsesRequest)
 		routingPlugin.SetDecisionRequestExecutor(s.Client.DecisionRequest)
 		s.applyRoutingLogRetention(routingPlugin)
+		s.applyRoutingCaptureDeleteRecorder(routingPlugin)
 	}
 
 	// Initialize Sidekiq runner for background jobs
