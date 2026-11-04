@@ -222,6 +222,58 @@ func TestComplexityVectorDeletes(t *testing.T) {
 	})
 }
 
+// The list pages in its order and filters by status; the counts cover every
+// status whatever the list selected; and a decision moves a suggestion only
+// from the status it was read at.
+func TestComplexitySuggestionsPagingCountsAndConditionalStatus(t *testing.T) {
+	forEachComplexitySuggestionStore(t, func(t *testing.T, store LogStore) {
+		ctx := context.Background()
+		a := testComplexitySuggestion(t, "a", 30, []float32{1, 0})
+		b := testComplexitySuggestion(t, "b", 20, []float32{0, 1})
+		c := testComplexitySuggestion(t, "c", 10, []float32{1, 1})
+		c.Status = ComplexitySuggestionStatusDismissed
+		require.NoError(t, store.UpsertComplexitySuggestions(ctx, []ComplexitySuggestion{a, b, c}))
+
+		page, err := store.ListComplexitySuggestions(ctx, ComplexitySuggestionFilter{Statuses: []string{ComplexitySuggestionStatusOpen}, Limit: 1, OmitCentroids: true})
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		assert.Equal(t, "a", page[0].ID, "largest first")
+		page, err = store.ListComplexitySuggestions(ctx, ComplexitySuggestionFilter{Statuses: []string{ComplexitySuggestionStatusOpen}, Limit: 1, Offset: 1, OmitCentroids: true})
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		assert.Equal(t, "b", page[0].ID)
+
+		counts, err := store.CountComplexitySuggestionsByStatus(ctx, ComplexitySuggestionFilter{Statuses: []string{ComplexitySuggestionStatusOpen}, Limit: 1})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]int{ComplexitySuggestionStatusOpen: 2, ComplexitySuggestionStatusDismissed: 1}, counts)
+
+		resolved := time.Now().UTC()
+		moved, err := store.UpdateComplexitySuggestionStatus(ctx, "a", ComplexitySuggestionStatusOpen, ComplexitySuggestionStatusAccepted, &resolved)
+		require.NoError(t, err)
+		assert.True(t, moved)
+		moved, err = store.UpdateComplexitySuggestionStatus(ctx, "a", ComplexitySuggestionStatusOpen, ComplexitySuggestionStatusDismissed, &resolved)
+		require.NoError(t, err)
+		assert.False(t, moved, "a decision read at open loses once another moved it")
+		moved, err = store.UpdateComplexitySuggestionStatus(ctx, "missing", ComplexitySuggestionStatusOpen, ComplexitySuggestionStatusAccepted, &resolved)
+		require.NoError(t, err)
+		assert.False(t, moved)
+
+		rows, err := store.ListComplexitySuggestions(ctx, ComplexitySuggestionFilter{IDs: []string{"a"}})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, ComplexitySuggestionStatusAccepted, rows[0].Status)
+		require.NotNil(t, rows[0].ResolvedAt)
+		assert.NotEmpty(t, rows[0].Centroid, "the centroid is kept for the next run's match")
+
+		moved, err = store.UpdateComplexitySuggestionStatus(ctx, "a", ComplexitySuggestionStatusAccepted, ComplexitySuggestionStatusOpen, nil)
+		require.NoError(t, err)
+		assert.True(t, moved)
+		rows, err = store.ListComplexitySuggestions(ctx, ComplexitySuggestionFilter{IDs: []string{"a"}})
+		require.NoError(t, err)
+		assert.Nil(t, rows[0].ResolvedAt, "reopening clears when it was resolved")
+	})
+}
+
 // ClickHouse writes both tables complexitySuggestionWriteBatch rows per
 // insert, as the RDB store does, so a large delete or run never builds one
 // statement for all of its rows; every row still lands.

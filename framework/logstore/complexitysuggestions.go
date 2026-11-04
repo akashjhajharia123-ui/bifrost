@@ -251,6 +251,9 @@ type ComplexitySuggestionFilter struct {
 	EmbeddingSignature string
 	// OmitCentroids leaves Centroid unread, for callers that only list.
 	OmitCentroids bool
+	// Limit and Offset page the selection, in its order; a Limit of 0 reads
+	// all of it.
+	Limit, Offset int
 }
 
 // ComplexitySuggestionStore is the phrase-suggestion surface. It is embedded
@@ -265,6 +268,14 @@ type ComplexitySuggestionStore interface {
 	// cluster first. Suggestions have no owner, so the access scope does not
 	// apply; the examples are resolved through the scoped log reads.
 	ListComplexitySuggestions(ctx context.Context, filter ComplexitySuggestionFilter) ([]ComplexitySuggestion, error)
+	// CountComplexitySuggestionsByStatus counts the suggestions the filter
+	// selects, per status; its Statuses, Limit and Offset are ignored.
+	CountComplexitySuggestionsByStatus(ctx context.Context, filter ComplexitySuggestionFilter) (map[string]int, error)
+	// UpdateComplexitySuggestionStatus moves one suggestion from status from
+	// to status to, stamping resolvedAt, only while it is still at from. It
+	// reports whether it did: false means the suggestion is gone or another
+	// write moved it first.
+	UpdateComplexitySuggestionStatus(ctx context.Context, id, from, to string, resolvedAt *time.Time) (bool, error)
 	// DeleteComplexitySuggestions removes suggestions outright.
 	DeleteComplexitySuggestions(ctx context.Context, ids []string) error
 
@@ -417,9 +428,60 @@ func (s *RDBLogStore) ListComplexitySuggestions(ctx context.Context, filter Comp
 	if filter.EmbeddingSignature != "" {
 		query = query.Where("embedding_signature = ?", filter.EmbeddingSignature)
 	}
+	query = query.Order("request_count DESC, id ASC")
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query = query.Offset(filter.Offset)
+	}
 	var suggestions []ComplexitySuggestion
-	err := query.Order("request_count DESC, id ASC").Find(&suggestions).Error
+	err := query.Find(&suggestions).Error
 	return suggestions, err
+}
+
+// CountComplexitySuggestionsByStatus counts the selected suggestions per
+// status.
+func (s *RDBLogStore) CountComplexitySuggestionsByStatus(ctx context.Context, filter ComplexitySuggestionFilter) (map[string]int, error) {
+	query := s.db.WithContext(ctx).Model(&ComplexitySuggestion{})
+	if filter.RouterID != "" {
+		query = query.Where("router_id = ?", filter.RouterID)
+	}
+	if len(filter.IDs) > 0 {
+		query = query.Where("id IN ?", filter.IDs)
+	}
+	if filter.EmbeddingSignature != "" {
+		query = query.Where("embedding_signature = ?", filter.EmbeddingSignature)
+	}
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	if err := query.Select("status, COUNT(*) AS count").Group("status").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.Status] = int(row.Count)
+	}
+	return counts, nil
+}
+
+// UpdateComplexitySuggestionStatus moves a suggestion between statuses with
+// one conditional update, so of two decisions read from the same status only
+// the first lands.
+func (s *RDBLogStore) UpdateComplexitySuggestionStatus(ctx context.Context, id, from, to string, resolvedAt *time.Time) (bool, error) {
+	if resolvedAt != nil {
+		resolved := resolvedAt.UTC()
+		resolvedAt = &resolved
+	}
+	result := s.db.WithContext(ctx).Model(&ComplexitySuggestion{}).
+		Where("id = ? AND status = ?", id, from).
+		Updates(map[string]any{"status": to, "resolved_at": resolvedAt, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // DeleteComplexitySuggestions removes suggestions outright.

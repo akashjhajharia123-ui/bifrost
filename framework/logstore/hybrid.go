@@ -2992,6 +2992,16 @@ func (h *HybridLogStore) ListComplexitySuggestions(ctx context.Context, filter C
 	return h.inner.ListComplexitySuggestions(ctx, filter)
 }
 
+// CountComplexitySuggestionsByStatus counts suggestions per status.
+func (h *HybridLogStore) CountComplexitySuggestionsByStatus(ctx context.Context, filter ComplexitySuggestionFilter) (map[string]int, error) {
+	return h.inner.CountComplexitySuggestionsByStatus(ctx, filter)
+}
+
+// UpdateComplexitySuggestionStatus moves a suggestion between statuses.
+func (h *HybridLogStore) UpdateComplexitySuggestionStatus(ctx context.Context, id, from, to string, resolvedAt *time.Time) (bool, error) {
+	return h.inner.UpdateComplexitySuggestionStatus(ctx, id, from, to, resolvedAt)
+}
+
 // DeleteComplexitySuggestions removes suggestions outright.
 func (h *HybridLogStore) DeleteComplexitySuggestions(ctx context.Context, ids []string) error {
 	return h.inner.DeleteComplexitySuggestions(ctx, ids)
