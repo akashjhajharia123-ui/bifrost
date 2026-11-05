@@ -571,16 +571,18 @@ type permitStore struct {
 	bases   []schemas.Permit
 	scoping schemas.Permit
 	mode    grant.CompositionMode
+	// boundaries cap whatever bases the store answers with.
+	boundaries [][]schemas.Permit
 	// resolvesNothing makes the store answer with no permit at all, as a store that resolves callers
 	// beyond keys does when the caller it was asked about has no access configured.
 	resolvesNothing bool
 	calls           int
 }
 
-func (s *permitStore) ResolvePermits(ctx *schemas.BifrostContext) ([]schemas.Permit, schemas.Permit, grant.CompositionMode) {
+func (s *permitStore) ResolvePermits(ctx *schemas.BifrostContext) ([]schemas.Permit, [][]schemas.Permit, schemas.Permit, grant.CompositionMode) {
 	s.calls++
 	if s.resolvesNothing {
-		return nil, nil, ""
+		return nil, nil, nil, ""
 	}
 	var bases []schemas.Permit
 	switch {
@@ -589,9 +591,9 @@ func (s *permitStore) ResolvePermits(ctx *schemas.BifrostContext) ([]schemas.Per
 	case s.baseOverride != nil:
 		bases = []schemas.Permit{s.baseOverride}
 	default:
-		bases, _, _ = s.GovernanceStore.ResolvePermits(ctx)
+		bases, _, _, _ = s.GovernanceStore.ResolvePermits(ctx)
 	}
-	return bases, s.scoping, s.mode
+	return bases, s.boundaries, s.scoping, s.mode
 }
 
 // newAccessTestPlugin builds a plugin over a store that serves vk, optionally wrapped so the
@@ -652,6 +654,27 @@ func TestResolveAccess(t *testing.T) {
 		assert.Equal(t, string(grant.Union), access.Mode())
 		assert.True(t, access.IsProviderAllowed("openai"), "the key's own provider")
 		assert.True(t, access.IsProviderAllowed("anthropic"), "the permit scoping the request")
+	})
+
+	t.Run("boundaries the store answers with cap the caller's permits", func(t *testing.T) {
+		// The key permits every openai model; the boundary permits one. What is left is that one, and a
+		// refusal names the boundary rather than the key that permitted the model.
+		boundary := grant.NewPermit("other", "c1", "Boundary", true, false, []schemas.ProviderPermit{{
+			Provider: "openai", AllowedModels: []string{"gpt-4o-mini"}, KeyIDs: []string{"*"},
+		}}, nil)
+		store := &permitStore{boundaries: [][]schemas.Permit{{boundary}}}
+		plugin := newAccessTestPlugin(t, vk, store)
+
+		access, err := plugin.ResolveAccess(newPreRequestCtx(nil, nil))
+
+		require.NoError(t, err)
+		require.NotNil(t, access)
+		require.Len(t, access.Boundaries(), 1)
+		assert.True(t, access.IsModelAllowed("openai", "gpt-4o-mini"))
+		assert.False(t, access.IsModelAllowed("openai", "gpt-4o"))
+		denied := access.DeniedPermitsForModel("openai", "gpt-4o")
+		require.Len(t, denied, 1)
+		assert.Equal(t, "c1", denied[0].ID())
 	})
 
 	t.Run("the store may answer for a caller whose permits are not a key's", func(t *testing.T) {
@@ -1488,7 +1511,7 @@ func TestPermitFindsItsOwnScopedModelConfigs(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := resolverCtx(store, "sk-bf-scoped")
-	bases, _, _ := store.ResolvePermits(ctx)
+	bases, _, _, _ := store.ResolvePermits(ctx)
 	require.Len(t, bases, 1)
 	require.Equal(t, string(grant.PermitVirtualKey), bases[0].Type(), "the type production stamps, not a scope name")
 
