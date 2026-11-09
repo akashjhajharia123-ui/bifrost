@@ -44,6 +44,11 @@ import {
 } from "@/lib/types/governance";
 import {
 	AnalyzerConfig,
+	ModelRouter,
+	ModelRouterDefaults,
+	ModelRouterList,
+	ModelRouterRouting,
+	ModelRouterTarget,
 	PhraseTestRequest,
 	PhraseTestResult,
 	SemanticStatusInfo,
@@ -912,6 +917,62 @@ export const governanceApi = baseApi.injectEndpoints({
 			invalidatesTags: ["ComplexityAnalyzerConfig"],
 		}),
 
+		// Model routers, apart from the Complexity Router page's config above.
+		// A router's classifier, targets and routing are saved on separate
+		// endpoints, so saving one never changes the others.
+		getModelRouters: builder.query<ModelRouterList, void>({
+			query: () => ({ url: "/routing/model-routers", method: "GET" }),
+			providesTags: ["ModelRouters"],
+		}),
+		getModelRouter: builder.query<ModelRouter, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "GET" }),
+			providesTags: ["ModelRouters"],
+		}),
+		// What a new router starts from; it never changes while the gateway runs.
+		getModelRouterDefaults: builder.query<ModelRouterDefaults, void>({
+			query: () => ({ url: "/routing/model-routers/defaults", method: "GET" }),
+		}),
+		// A router created without routing starts off, after the other global routers.
+		createModelRouter: builder.mutation<ModelRouter, Omit<ModelRouter, "id" | "routing"> & { id?: string }>({
+			query: (body) => ({ url: "/routing/model-routers", method: "POST", body }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		// Replaces the router's name, description and classifier; its targets
+		// and routing are left as they are.
+		updateModelRouter: builder.mutation<ModelRouter, Omit<ModelRouter, "routing">>({
+			query: ({ id, ...body }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "PUT", body }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		// Replaces the model each tier gets.
+		setModelRouterTargets: builder.mutation<ModelRouter, { id: string; targets: ModelRouterTarget[] }>({
+			query: ({ id, targets }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/targets`, method: "PUT", body: { targets } }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		// Replaces which requests the router takes, turning it on or off included.
+		setModelRouterRouting: builder.mutation<ModelRouter, { id: string; routing: ModelRouterRouting }>({
+			query: ({ id, routing }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/routing`, method: "PUT", body: routing }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		deleteModelRouter: builder.mutation<void, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "DELETE" }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		resetModelRouter: builder.mutation<ModelRouter, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/reset`, method: "POST" }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		// Readiness is derived from the saved configuration — a save or a reset
+		// restarts warmup — so it has to be invalidated by the same tag, or the
+		// page keeps showing the state the classifier was in before the edit.
+		getModelRouterStatus: builder.query<SemanticStatusInfo, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/status`, method: "GET" }),
+			providesTags: ["ModelRouters"],
+		}),
+		retryModelRouterWarmup: builder.mutation<SemanticStatusInfo, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/status/retry`, method: "POST" }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+
 		// Phrase suggestions. Every call is about one router; routerId defaults
 		// to the gateway's one router until it can define several.
 		getComplexitySuggestions: builder.query<SuggestionsList, { statuses: SuggestionStatus[]; routerId?: string }>({
@@ -1047,6 +1108,19 @@ export const {
 	useResetComplexityAnalyzerConfigMutation,
 	useGetComplexitySemanticStatusQuery,
 	useRetryComplexitySemanticWarmupMutation,
+
+	// Model routers
+	useGetModelRoutersQuery,
+	useGetModelRouterQuery,
+	useGetModelRouterDefaultsQuery,
+	useCreateModelRouterMutation,
+	useUpdateModelRouterMutation,
+	useSetModelRouterTargetsMutation,
+	useSetModelRouterRoutingMutation,
+	useDeleteModelRouterMutation,
+	useResetModelRouterMutation,
+	useGetModelRouterStatusQuery,
+	useRetryModelRouterWarmupMutation,
 	useGetComplexitySuggestionsQuery,
 	useGetComplexitySuggestionQuery,
 	useUpdateComplexitySuggestionStatusMutation,

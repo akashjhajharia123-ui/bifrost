@@ -54,7 +54,8 @@ import {
 } from "./formSchema";
 import { ClassifierStatusBadge } from "./views/classifierStatusBadge";
 import EmbeddingConfigSheet from "./views/embeddingConfigSheet";
-import DecisionSettingsSheet from "./views/decisionSettingsSheet";
+import ClassifierSettingsSheet from "./views/classifierSettingsSheet";
+import { RoutersNotice } from "./views/routersNotice";
 import SuggestionSettingsSheet from "./views/suggestionSettingsSheet";
 import SuggestionsTab from "./views/suggestionsTab";
 import {
@@ -669,6 +670,8 @@ export default function ComplexityRouterPage() {
 					{liveSession.enabled ? ` ${tcpx("descriptionSession")}` : ""}
 				</PageTitle>
 
+				<RoutersNotice />
+
 				{/* Same shape as the Edge inventory page: a slim step nav on the
 				    left, the open step on the right. It spans the full content width
 				    rather than a centred max-width, which on wide screens left an
@@ -1005,15 +1008,19 @@ export default function ComplexityRouterPage() {
 				submitError={submitError}
 			/>
 
-			<DecisionSettingsSheet
+			<ClassifierSettingsSheet
 				open={decisionSheetOpen && !isSemantic}
 				onOpenChange={setDecisionSheetOpen}
-				decisionSettings={decisionSettings}
+				title={tcpx("decisionSheetTitle")}
+				description={tcpx("decisionSheetDescription")}
+				testIdPrefix="complexity-router-decision"
 				canSave={canSave}
 				isSaving={isSaving}
 				onSave={() => void submit()}
 				submitError={submitError}
-			/>
+			>
+				{decisionSettings}
+			</ClassifierSettingsSheet>
 
 			<AlertDialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
 				<AlertDialogContent>
