@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -592,6 +593,7 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_datasheet_overrides_table"}, run: migrationAddDatasheetOverridesTable},
 	{IDs: []string{"add_usage_estimation_tokenizers_json_column"}, run: migrationAddUsageEstimationTokenizersJSONColumn},
 	{IDs: []string{"add_model_routing_suggestion_schedules_table"}, run: migrationAddComplexitySuggestionSchedulesTable},
+	{IDs: []string{"add_model_routers_table"}, run: migrationAddModelRoutersTable},
 }
 
 // warpLogEmbeddingColumns are the semantic-search configuration columns added
@@ -13722,6 +13724,58 @@ func migrationBackfillDefaultComplexityExemplars(ctx context.Context, db *gorm.D
 		return fmt.Errorf("error running %s migration: %w", migrationName, err)
 	}
 	return nil
+}
+
+// migrationAddModelRoutersTable creates model_routers and moves the persisted
+// complexity config into it as a router that answers complexity_tier, so
+// routing rules keep reading the same tiers. The router carries the config's
+// config.json section hashes and embedding fingerprint so the first boot
+// neither re-applies config.json over dashboard edits nor re-embeds the
+// phrases.
+//
+// It moves exactly what this version would have routed with: no stored config
+// (or only half of one) creates no router, so complexity_tier keeps running on
+// the built-in defaults; a stored config this version cannot read is left out
+// with a warning, as reading it would have degraded to the defaults too. The
+// governance_config rows are left in place for a rolled-back Bifrost.
+func migrationAddModelRoutersTable(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_model_routers_table"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	return RunSingleMigration(ctx, nil, db, logger, &migrator.Migration{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := tx.AutoMigrate(&tables.TableModelRouter{}); err != nil {
+				return err
+			}
+			legacy, err := readLegacyComplexityAnalyzerConfig(ctx, tx)
+			if err != nil {
+				if errors.Is(err, ErrConfigUnreadable) {
+					logger.Warn("[configstore] %s: the stored complexity config is unreadable and was not moved; complexity_tier runs on the built-in defaults until a model router answers it: %v",
+						migrationName, err)
+					return nil
+				}
+				return fmt.Errorf("read persisted complexity config: %w", err)
+			}
+			if legacy == nil {
+				return nil
+			}
+			row, err := modelRouterToTable(&ModelRouter{
+				ID:                       LegacyComplexityRouterID,
+				Name:                     LegacyComplexityRouterName,
+				AnswersComplexityTier:    true,
+				ComplexityAnalyzerConfig: *legacy,
+			})
+			if err != nil {
+				return fmt.Errorf("encode the complexity model router: %w", err)
+			}
+			return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error
+		},
+		Rollback: func(*gorm.DB) error {
+			return fmt.Errorf("%s is non-rollbackable: dropping model_routers would delete every model router", migrationName)
+		},
+	})
 }
 
 func appendMissingDefaultComplexityExemplars(config *ComplexityAnalyzerConfig, defaults ComplexityEditableKeywordConfig) int {
