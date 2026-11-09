@@ -2383,6 +2383,7 @@
 				"configuration": "配置",
 				"models": "模型",
 				"routing": "路由",
+				"test": "测试",
 				"suggestions": "建议",
 				"unsaved": "未保存的更改"
 			},
@@ -2409,7 +2410,10 @@
 					"routingDone_one": "{{count}} 条规则会将请求发送到这里。",
 					"routingDone_other": "{{count}} 条规则会将请求发送到这里。",
 					"routingPending": "没有规则时，任何请求都不会到达该路由器。规则可以匹配团队、密钥，或应用请求的模型名称。",
-					"addRule": "添加规则"
+					"addRule": "添加规则",
+					"test": "测试请求",
+					"testDetail": "可选。在发送流量之前检查几个请求。",
+					"testAction": "测试"
 				},
 				"facts": {
 					"classifier": "分类器",
@@ -2437,6 +2441,24 @@
 			},
 			"routing": {
 				"orderNote": "规则会在路由规则之后，在每个范围内按优先级依次尝试。未匹配任何规则的请求不会被分类。"
+			},
+			"test": {
+				"description": "使用当前提供的路由器对示例请求进行分类，检查每个请求会得到哪个层级和模型。不会保存任何内容。",
+				"placeholder": "每行一个请求。在行首加上 SIMPLE:、MEDIUM: 或 COMPLEX: 可检查其应得的层级。",
+				"run_one": "分类 {{count}} 个请求",
+				"run_other": "分类 {{count}} 个请求",
+				"hint": "使用决策模型或 LLM 的路由器会为每个请求调用一次模型。",
+				"tooMany": "每次最多分类 {{max}} 个请求。",
+				"failed": "分类失败：{{error}}",
+				"unclassified": "无层级",
+				"accuracy": "{{labeled}} 个已标注请求中有 {{correct}} 个得到了预期层级",
+				"columnStatement": "请求",
+				"columnTier": "层级",
+				"columnHow": "判定方式",
+				"columnModel": "模型",
+				"correct": "预期层级",
+				"expected": "预期 {{tier}}",
+				"keepsModel": "保留请求的模型"
 			}
 		},
 		"modelRoutingRules": {

@@ -2385,6 +2385,7 @@
 				"configuration": "Configuration",
 				"models": "Modèles",
 				"routing": "Routage",
+				"test": "Tester",
 				"suggestions": "Suggestions",
 				"unsaved": "Modifications non enregistrées"
 			},
@@ -2411,7 +2412,10 @@
 					"routingDone_one": "{{count}} règle envoie des requêtes ici.",
 					"routingDone_other": "{{count}} règles envoient des requêtes ici.",
 					"routingPending": "Sans règle, aucune requête n’atteint le routeur. Une règle peut correspondre à une équipe, une clé ou le nom de modèle demandé par une application.",
-					"addRule": "Ajouter une règle"
+					"addRule": "Ajouter une règle",
+					"test": "Tester une requête",
+					"testDetail": "Facultatif. Vérifiez quelques requêtes avant d’envoyer du trafic.",
+					"testAction": "Tester"
 				},
 				"facts": {
 					"classifier": "Classificateur",
@@ -2439,6 +2443,24 @@
 			},
 			"routing": {
 				"orderNote": "Les règles sont évaluées par priorité au sein de chaque portée, après les règles de routage. Les requêtes auxquelles aucune règle ne correspond ne sont pas classées."
+			},
+			"test": {
+				"description": "Classez des requêtes d’exemple avec le routeur tel qu’il est servi actuellement, pour vérifier le niveau et le modèle que chacune obtiendrait. Rien n’est enregistré.",
+				"placeholder": "Une requête par ligne. Commencez une ligne par SIMPLE:, MEDIUM: ou COMPLEX: pour vérifier le niveau attendu.",
+				"run_one": "Classer {{count}} requête",
+				"run_other": "Classer {{count}} requêtes",
+				"hint": "Un routeur à modèle de décision ou LLM fait un appel au modèle par requête.",
+				"tooMany": "Classez au plus {{max}} requêtes à la fois.",
+				"failed": "Échec de la classification : {{error}}",
+				"unclassified": "Aucun niveau",
+				"accuracy": "{{correct}} requêtes étiquetées sur {{labeled}} ont obtenu le niveau attendu",
+				"columnStatement": "Requête",
+				"columnTier": "Niveau",
+				"columnHow": "Décidé par",
+				"columnModel": "Modèle",
+				"correct": "Niveau attendu",
+				"expected": "attendu : {{tier}}",
+				"keepsModel": "Conserve le modèle de la requête"
 			}
 		},
 		"modelRoutingRules": {

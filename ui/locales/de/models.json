@@ -2385,6 +2385,7 @@
 				"configuration": "Konfiguration",
 				"models": "Modelle",
 				"routing": "Routing",
+				"test": "Testen",
 				"suggestions": "Vorschläge",
 				"unsaved": "Ungespeicherte Änderungen"
 			},
@@ -2411,7 +2412,10 @@
 					"routingDone_one": "{{count}} Regel sendet Anfragen hierher.",
 					"routingDone_other": "{{count}} Regeln senden Anfragen hierher.",
 					"routingPending": "Ohne Regel erreicht keine Anfrage den Router. Eine Regel kann auf ein Team, einen Schlüssel oder den Modellnamen zutreffen, den eine App anfordert.",
-					"addRule": "Regel hinzufügen"
+					"addRule": "Regel hinzufügen",
+					"test": "Eine Anfrage testen",
+					"testDetail": "Optional. Prüfen Sie einige Anfragen, bevor Traffic ankommt.",
+					"testAction": "Testen"
 				},
 				"facts": {
 					"classifier": "Klassifikator",
@@ -2439,6 +2443,24 @@
 			},
 			"routing": {
 				"orderNote": "Regeln werden innerhalb jedes Bereichs nach Priorität geprüft, nach den Routing-Regeln. Anfragen, auf die keine Regel zutrifft, werden nicht klassifiziert."
+			},
+			"test": {
+				"description": "Klassifizieren Sie Beispielanfragen mit dem Router in seinem aktuellen Zustand, um zu prüfen, welche Stufe und welches Modell jede erhalten würde. Es wird nichts gespeichert.",
+				"placeholder": "Eine Anfrage pro Zeile. Beginnen Sie eine Zeile mit SIMPLE:, MEDIUM: oder COMPLEX:, um die erwartete Stufe zu prüfen.",
+				"run_one": "{{count}} Anfrage klassifizieren",
+				"run_other": "{{count}} Anfragen klassifizieren",
+				"hint": "Ein Router mit Entscheidungsmodell oder LLM führt pro Anfrage einen Modellaufruf aus.",
+				"tooMany": "Klassifizieren Sie höchstens {{max}} Anfragen auf einmal.",
+				"failed": "Klassifizierung fehlgeschlagen: {{error}}",
+				"unclassified": "Keine Stufe",
+				"accuracy": "{{correct}} von {{labeled}} markierten Anfragen erhielten die erwartete Stufe",
+				"columnStatement": "Anfrage",
+				"columnTier": "Stufe",
+				"columnHow": "Entschieden durch",
+				"columnModel": "Modell",
+				"correct": "Erwartete Stufe",
+				"expected": "erwartet: {{tier}}",
+				"keepsModel": "Behält das Modell der Anfrage"
 			}
 		},
 		"modelRoutingRules": {

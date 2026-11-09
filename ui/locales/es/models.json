@@ -2385,6 +2385,7 @@
 				"configuration": "Configuración",
 				"models": "Modelos",
 				"routing": "Enrutamiento",
+				"test": "Probar",
 				"suggestions": "Sugerencias",
 				"unsaved": "Cambios sin guardar"
 			},
@@ -2411,7 +2412,10 @@
 					"routingDone_one": "{{count}} regla envía solicitudes aquí.",
 					"routingDone_other": "{{count}} reglas envían solicitudes aquí.",
 					"routingPending": "Sin una regla, ninguna solicitud llega al enrutador. Una regla puede coincidir con un equipo, una clave o el nombre de modelo que pide una aplicación.",
-					"addRule": "Añadir una regla"
+					"addRule": "Añadir una regla",
+					"test": "Probar una solicitud",
+					"testDetail": "Opcional. Revisa algunas solicitudes antes de enviar tráfico.",
+					"testAction": "Probar"
 				},
 				"facts": {
 					"classifier": "Clasificador",
@@ -2439,6 +2443,24 @@
 			},
 			"routing": {
 				"orderNote": "Las reglas se prueban por prioridad dentro de cada ámbito, después de las reglas de enrutamiento. Las solicitudes que no coinciden con ninguna regla no se clasifican."
+			},
+			"test": {
+				"description": "Clasifica solicitudes de ejemplo con el router tal como se sirve ahora, para comprobar qué nivel y qué modelo recibiría cada una. No se guarda nada.",
+				"placeholder": "Una solicitud por línea. Empieza una línea con SIMPLE:, MEDIUM: o COMPLEX: para comprobar el nivel que debería recibir.",
+				"run_one": "Clasificar {{count}} solicitud",
+				"run_other": "Clasificar {{count}} solicitudes",
+				"hint": "Un router con modelo de decisión o LLM hace una llamada al modelo por solicitud.",
+				"tooMany": "Clasifica como máximo {{max}} solicitudes a la vez.",
+				"failed": "La clasificación falló: {{error}}",
+				"unclassified": "Sin nivel",
+				"accuracy": "{{correct}} de {{labeled}} solicitudes etiquetadas recibieron el nivel esperado",
+				"columnStatement": "Solicitud",
+				"columnTier": "Nivel",
+				"columnHow": "Decidido por",
+				"columnModel": "Modelo",
+				"correct": "Nivel esperado",
+				"expected": "se esperaba {{tier}}",
+				"keepsModel": "Mantiene el modelo de la solicitud"
 			}
 		},
 		"modelRoutingRules": {

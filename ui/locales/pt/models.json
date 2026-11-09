@@ -2385,6 +2385,7 @@
 				"configuration": "Configuração",
 				"models": "Modelos",
 				"routing": "Encaminhamento",
+				"test": "Testar",
 				"suggestions": "Sugestões",
 				"unsaved": "Alterações por guardar"
 			},
@@ -2411,7 +2412,10 @@
 					"routingDone_one": "{{count}} regra envia pedidos para aqui.",
 					"routingDone_other": "{{count}} regras enviam pedidos para aqui.",
 					"routingPending": "Sem uma regra, nenhum pedido chega ao encaminhador. Uma regra pode corresponder a uma equipa, a uma chave ou ao nome do modelo que uma aplicação pede.",
-					"addRule": "Adicionar uma regra"
+					"addRule": "Adicionar uma regra",
+					"test": "Testar uma requisição",
+					"testDetail": "Opcional. Verifique algumas requisições antes de enviar tráfego.",
+					"testAction": "Testar"
 				},
 				"facts": {
 					"classifier": "Classificador",
@@ -2439,6 +2443,24 @@
 			},
 			"routing": {
 				"orderNote": "As regras são avaliadas por prioridade dentro de cada âmbito, depois das regras de encaminhamento. Os pedidos que não correspondem a nenhuma regra não são classificados."
+			},
+			"test": {
+				"description": "Classifique requisições de exemplo com o roteador como está sendo servido agora, para verificar qual nível e qual modelo cada uma receberia. Nada é salvo.",
+				"placeholder": "Uma requisição por linha. Comece uma linha com SIMPLE:, MEDIUM: ou COMPLEX: para verificar o nível esperado.",
+				"run_one": "Classificar {{count}} requisição",
+				"run_other": "Classificar {{count}} requisições",
+				"hint": "Um roteador com modelo de decisão ou LLM faz uma chamada ao modelo por requisição.",
+				"tooMany": "Classifique no máximo {{max}} requisições por vez.",
+				"failed": "A classificação falhou: {{error}}",
+				"unclassified": "Sem nível",
+				"accuracy": "{{correct}} de {{labeled}} requisições rotuladas receberam o nível esperado",
+				"columnStatement": "Requisição",
+				"columnTier": "Nível",
+				"columnHow": "Decidido por",
+				"columnModel": "Modelo",
+				"correct": "Nível esperado",
+				"expected": "esperado {{tier}}",
+				"keepsModel": "Mantém o modelo da requisição"
 			}
 		},
 		"modelRoutingRules": {

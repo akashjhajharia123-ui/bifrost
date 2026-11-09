@@ -27,12 +27,14 @@ interface OverviewTabProps {
 	// The enabled model routing rules that send requests to this router.
 	rules: ModelRoutingRule[];
 	requests7d: number | undefined;
+	// Whether a test ran on this visit.
+	tested: boolean;
 	onNavigate: (tab: RouterTab) => void;
 }
 
 // OverviewTab says what the router still needs before it serves traffic, and
 // how it is set up, one fact per tab.
-export function OverviewTab({ router, rules, requests7d, onNavigate }: OverviewTabProps) {
+export function OverviewTab({ router, rules, requests7d, tested, onNavigate }: OverviewTabProps) {
 	const { t } = useTranslation("models", { keyPrefix: "routing.modelRouters.overview" });
 	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
 	const classifier = classifierSummary(router, tcpx);
@@ -66,12 +68,22 @@ export function OverviewTab({ router, rules, requests7d, onNavigate }: OverviewT
 			actionLabel: t("setup.addRule"),
 			onAction: () => onNavigate("routing"),
 		},
+		{
+			key: "test",
+			title: t("setup.test"),
+			detail: t("setup.testDetail"),
+			done: tested,
+			actionLabel: t("setup.testAction"),
+			onAction: () => onNavigate("test"),
+		},
 	];
 	const done = steps.filter((step) => step.done).length;
+	// Testing is optional, so the card goes once everything else is done.
+	const setupComplete = steps.every((step) => step.done || step.key === "test");
 
 	return (
 		<div className="flex min-h-0 grow flex-col gap-4 overflow-y-auto" data-testid="model-router-overview">
-			{done < steps.length && (
+			{!setupComplete && (
 				<SetupChecklist
 					title={t("setup.title")}
 					summary={t("setup.summary", { done, total: steps.length })}

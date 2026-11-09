@@ -2385,6 +2385,7 @@
 				"configuration": "Configuration",
 				"models": "Models",
 				"routing": "Routing",
+				"test": "Test",
 				"suggestions": "Suggestions",
 				"unsaved": "Unsaved changes"
 			},
@@ -2411,7 +2412,10 @@
 					"routingDone_one": "{{count}} rule sends requests here.",
 					"routingDone_other": "{{count}} rules send requests here.",
 					"routingPending": "Without a rule, no request reaches the router. A rule can match a team, a key, or the model name an app asks for.",
-					"addRule": "Add a rule"
+					"addRule": "Add a rule",
+					"test": "Test a request",
+					"testDetail": "Optional. Check a few requests before sending traffic.",
+					"testAction": "Test"
 				},
 				"facts": {
 					"classifier": "Classifier",
@@ -2439,6 +2443,24 @@
 			},
 			"routing": {
 				"orderNote": "Rules are tried by priority within each scope, after the routing rules. Requests no rule matches are not classified."
+			},
+			"test": {
+				"description": "Classify sample requests with the router as it is served now, to check which tier and model each would get. Nothing is saved.",
+				"placeholder": "One request per line. Start a line with SIMPLE:, MEDIUM: or COMPLEX: to check the tier it should get.",
+				"run_one": "Classify {{count}} request",
+				"run_other": "Classify {{count}} requests",
+				"hint": "A decision-model or LLM router makes one model call per request.",
+				"tooMany": "Classify at most {{max}} requests at a time.",
+				"failed": "Classification failed: {{error}}",
+				"unclassified": "No tier",
+				"accuracy": "{{correct}} of {{labeled}} labelled requests got the expected tier",
+				"columnStatement": "Request",
+				"columnTier": "Tier",
+				"columnHow": "Decided by",
+				"columnModel": "Model",
+				"correct": "Expected tier",
+				"expected": "expected {{tier}}",
+				"keepsModel": "Keeps the request's model"
 			}
 		},
 		"modelRoutingRules": {

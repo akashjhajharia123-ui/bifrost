@@ -44,6 +44,8 @@ import {
 } from "@/lib/types/governance";
 import {
 	ModelRouter,
+	ModelRouterClassifyInput,
+	ModelRouterClassifyResponse,
 	ModelRouterDefaults,
 	ModelRouterList,
 	ModelRouterTarget,
@@ -889,6 +891,10 @@ export const governanceApi = baseApi.injectEndpoints({
 		getModelRouterDefaults: builder.query<ModelRouterDefaults, void>({
 			query: () => ({ url: "/routing/model-routers/defaults", method: "GET" }),
 		}),
+		// Classifies statements with a router as it is served now. Nothing is saved.
+		classifyWithModelRouter: builder.mutation<ModelRouterClassifyResponse, { id: string; inputs: ModelRouterClassifyInput[] }>({
+			query: ({ id, inputs }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/classify`, method: "POST", body: { inputs } }),
+		}),
 		// Replaces the model each tier gets, leaving the router's classifier as it is.
 		setModelRouterTargets: builder.mutation<ModelRouter, { id: string; targets: ModelRouterTarget[] }>({
 			query: ({ id, targets }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/targets`, method: "PUT", body: { targets } }),
@@ -1074,6 +1080,7 @@ export const {
 	useGetModelRouterQuery,
 	useGetModelRouterDefaultsQuery,
 	useSetModelRouterTargetsMutation,
+	useClassifyWithModelRouterMutation,
 	useCreateModelRouterMutation,
 	useUpdateModelRouterMutation,
 	useDeleteModelRouterMutation,

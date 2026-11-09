@@ -2383,6 +2383,7 @@
 				"configuration": "構成",
 				"models": "モデル",
 				"routing": "ルーティング",
+				"test": "テスト",
 				"suggestions": "提案",
 				"unsaved": "未保存の変更"
 			},
@@ -2409,7 +2410,10 @@
 					"routingDone_one": "{{count}} 件のルールがここにリクエストを送ります。",
 					"routingDone_other": "{{count}} 件のルールがここにリクエストを送ります。",
 					"routingPending": "ルールがないと、どのリクエストもルーターに届きません。ルールは、チーム、キー、またはアプリが要求するモデル名に一致させることができます。",
-					"addRule": "ルールを追加"
+					"addRule": "ルールを追加",
+					"test": "リクエストをテスト",
+					"testDetail": "任意。トラフィックを送る前にいくつかのリクエストを確認します。",
+					"testAction": "テスト"
 				},
 				"facts": {
 					"classifier": "分類器",
@@ -2437,6 +2441,24 @@
 			},
 			"routing": {
 				"orderNote": "ルールは、ルーティングルールの後に、各スコープ内で優先度順に評価されます。どのルールにも一致しないリクエストは分類されません。"
+			},
+			"test": {
+				"description": "現在提供中のルーターでサンプルリクエストを分類し、それぞれがどのティアとモデルになるかを確認します。何も保存されません。",
+				"placeholder": "1行に1リクエスト。行頭に SIMPLE:、MEDIUM:、COMPLEX: を付けると期待するティアを確認できます。",
+				"run_one": "{{count}}件のリクエストを分類",
+				"run_other": "{{count}}件のリクエストを分類",
+				"hint": "決定モデルまたはLLMのルーターは、リクエストごとにモデルを1回呼び出します。",
+				"tooMany": "一度に分類できるのは最大{{max}}件です。",
+				"failed": "分類に失敗しました: {{error}}",
+				"unclassified": "ティアなし",
+				"accuracy": "ラベル付きリクエスト{{labeled}}件中{{correct}}件が期待どおりのティアになりました",
+				"columnStatement": "リクエスト",
+				"columnTier": "ティア",
+				"columnHow": "判定方法",
+				"columnModel": "モデル",
+				"correct": "期待どおりのティア",
+				"expected": "期待: {{tier}}",
+				"keepsModel": "リクエストのモデルを維持"
 			}
 		},
 		"modelRoutingRules": {

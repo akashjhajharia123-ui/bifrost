@@ -31,8 +31,9 @@ import { ConfigurationTab } from "./configurationTab";
 import { ModelsTab } from "./modelsTab";
 import { OverviewTab } from "./overviewTab";
 import { RoutingTab } from "./routingTab";
+import { TestTab } from "./testTab";
 
-export const ROUTER_TABS = ["overview", "configuration", "models", "routing", "suggestions"] as const;
+export const ROUTER_TABS = ["overview", "configuration", "models", "routing", "test", "suggestions"] as const;
 export type RouterTab = (typeof ROUTER_TABS)[number];
 
 // A count beside a tab's name, as the project page shows them.
@@ -61,6 +62,8 @@ export default function RouterDetailView({ routerId, onBack }: RouterDetailViewP
 	const requestCounts = useRouterRequestCounts();
 	const [detailsOpen, setDetailsOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
+	// Whether a test ran on this visit; testing is optional and nothing records it.
+	const [tested, setTested] = useState(false);
 
 	const config = useRouterConfigForm({
 		saved: data,
@@ -159,6 +162,9 @@ export default function RouterDetailView({ routerId, onBack }: RouterDetailViewP
 								{tmr("tabs.routing")}
 								<TabCount>{allRules.length}</TabCount>
 							</TabsTrigger>
+							<TabsTrigger value="test" data-testid="model-router-tab-test">
+								{tmr("tabs.test")}
+							</TabsTrigger>
 							{showSuggestions && (
 								<TabsTrigger value="suggestions" data-testid="complexity-router-tab-suggestions">
 									{tmr("tabs.suggestions")}
@@ -223,7 +229,13 @@ export default function RouterDetailView({ routerId, onBack }: RouterDetailViewP
 				</div>
 
 				<TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
-					<OverviewTab router={data} rules={rules} requests7d={requestCounts?.get(routerId)} onNavigate={(next) => void setTab(next)} />
+					<OverviewTab
+						router={data}
+						rules={rules}
+						requests7d={requestCounts?.get(routerId)}
+						tested={tested}
+						onNavigate={(next) => void setTab(next)}
+					/>
 				</TabsContent>
 				<TabsContent value="configuration" className="flex min-h-0 flex-col overflow-hidden">
 					<ConfigurationTab config={config} />
@@ -233,6 +245,9 @@ export default function RouterDetailView({ routerId, onBack }: RouterDetailViewP
 				</TabsContent>
 				<TabsContent value="routing" className="flex min-h-0 flex-col overflow-hidden">
 					<RoutingTab routerId={routerId} />
+				</TabsContent>
+				<TabsContent value="test" className="flex min-h-0 flex-col overflow-hidden">
+					<TestTab router={data} onRun={() => setTested(true)} />
 				</TabsContent>
 				{showSuggestions && (
 					<TabsContent value="suggestions" className="custom-scrollbar flex min-h-0 flex-col overflow-y-auto">

@@ -2383,6 +2383,7 @@
 				"configuration": "配置",
 				"models": "模型",
 				"routing": "路由",
+				"test": "測試",
 				"suggestions": "建議",
 				"unsaved": "未儲存的變更"
 			},
@@ -2409,7 +2410,10 @@
 					"routingDone_one": "{{count}} 條規則會將請求傳送到這裡。",
 					"routingDone_other": "{{count}} 條規則會將請求傳送到這裡。",
 					"routingPending": "沒有規則時，任何請求都不會到達此路由器。規則可以匹配團隊、金鑰，或應用程式請求的模型名稱。",
-					"addRule": "新增規則"
+					"addRule": "新增規則",
+					"test": "測試請求",
+					"testDetail": "選用。在傳送流量前檢查幾個請求。",
+					"testAction": "測試"
 				},
 				"facts": {
 					"classifier": "分類器",
@@ -2437,6 +2441,24 @@
 			},
 			"routing": {
 				"orderNote": "規則會在路由規則之後，在每個範圍內依優先順序逐一嘗試。未匹配任何規則的請求不會被分類。"
+			},
+			"test": {
+				"description": "使用目前提供的路由器將範例請求分類，檢查每個請求會得到哪個層級與模型。不會儲存任何內容。",
+				"placeholder": "每行一個請求。在行首加上 SIMPLE:、MEDIUM: 或 COMPLEX: 可檢查其應得的層級。",
+				"run_one": "分類 {{count}} 個請求",
+				"run_other": "分類 {{count}} 個請求",
+				"hint": "使用決策模型或 LLM 的路由器會為每個請求呼叫一次模型。",
+				"tooMany": "每次最多分類 {{max}} 個請求。",
+				"failed": "分類失敗：{{error}}",
+				"unclassified": "無層級",
+				"accuracy": "{{labeled}} 個已標註請求中有 {{correct}} 個得到預期層級",
+				"columnStatement": "請求",
+				"columnTier": "層級",
+				"columnHow": "判定方式",
+				"columnModel": "模型",
+				"correct": "預期層級",
+				"expected": "預期 {{tier}}",
+				"keepsModel": "保留請求的模型"
 			}
 		},
 		"modelRoutingRules": {
