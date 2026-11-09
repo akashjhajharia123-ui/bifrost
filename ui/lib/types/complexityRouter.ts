@@ -4,7 +4,9 @@
  */
 
 import i18n from "@/lib/i18n";
+import type { RoutingFallbackWire, RoutingRule } from "@/lib/types/routingRules";
 import type { ParseKeys } from "i18next";
+import type { RuleGroupType } from "react-querybuilder";
 
 // Display text below resolves through i18n when read (getters), so these shared constants
 // follow the active locale for every consumer.
@@ -22,7 +24,7 @@ export type SemanticVectorStore = "embedded" | "vector_store";
 // Mirrors ComplexitySemanticFallback* in framework/configstore: what answers
 // when semantic classification produces no tier. An absent field on the wire
 // means "none".
-export type ClassifierMode = "semantic" | "decision";
+export type ClassifierMode = "semantic" | "decision" | "llm";
 export type SemanticFallback = "none" | "llm" | "decision";
 
 export type DecisionTier = (typeof COMPLEXITY_TIER_VALUES)[number];
@@ -171,6 +173,31 @@ export interface AnalyzerConfig {
 	// client-tunable thresholds or downgrade controls.
 	session?: SessionConfig;
 	suggestions?: SuggestionsConfig;
+}
+
+// A named model router: its identity, the same configuration the single
+// complexity router has always had, and the model each tier gets. The default
+// router always exists. Targets are read-only on the router itself: they are
+// replaced through their own endpoint.
+export interface ModelRouter extends AnalyzerConfig {
+	id: string;
+	name: string;
+	description?: string;
+	// Routing rules read complexity_tier from this router; at most one does.
+	answers_complexity_tier?: boolean;
+	targets?: ModelRouterTarget[];
+}
+
+// What a new router starts from, before anything is saved.
+export interface ModelRouterDefaults {
+	config: AnalyzerConfig;
+	decision_defaults: DecisionGuidanceDefaults;
+	llm_default_prompt: string;
+}
+
+export interface ModelRouterList {
+	routers: ModelRouter[];
+	count: number;
 }
 
 export type KeywordListKey = keyof EditableKeywordConfig;
@@ -517,9 +544,6 @@ export const DEFAULT_SUGGESTION_EVERY = "1d";
 // The gateway's default first run; runs repeat every interval from it.
 export const DEFAULT_SUGGESTION_START_AT = "1970-01-01T03:00:00Z";
 
-// The router suggestions belong to until a gateway can define several.
-export const DEFAULT_COMPLEXITY_ROUTER_ID = "default";
-
 // Run windows offered for "Run now"; the ones longer than the lookback are
 // left out, since the vectors they would read are gone.
 export const SUGGESTION_RUN_WINDOWS = ["24h", "7d", "14d", "30d"] as const;
@@ -620,4 +644,49 @@ export interface SuggestionRunEstimate {
 	assigned: number;
 	skipped: number;
 	max_model_calls: number;
+}
+
+/** One model for one tier of a model router. Omitting provider or model keeps the request's value. */
+export interface ModelRouterTarget {
+	tier: DecisionTier;
+	provider?: string;
+	model?: string;
+	key_id?: string;
+	weight: number;
+	ttft_timeout_ms?: number;
+	/** Replaces the request's fallback chain when this target is chosen. */
+	fallbacks?: RoutingFallbackWire[];
+}
+
+/** Picks the model router that classifies matching requests; the router's targets pick the model. */
+export interface ModelRoutingRule {
+	id: string;
+	name: string;
+	description: string;
+	enabled: boolean;
+	cel_expression: string;
+	query?: RuleGroupType;
+	model_router_id: string;
+	scope: RoutingRule["scope"];
+	scope_id?: string | null;
+	priority: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ModelRoutingRuleRequest {
+	name: string;
+	description?: string;
+	enabled?: boolean;
+	cel_expression?: string;
+	query?: RuleGroupType;
+	model_router_id: string;
+	scope: string;
+	scope_id?: string;
+	priority: number;
+}
+
+export interface ModelRoutingRuleList {
+	rules: ModelRoutingRule[];
+	count: number;
 }

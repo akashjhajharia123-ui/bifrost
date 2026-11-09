@@ -104,6 +104,7 @@ describe("Decision complexity configuration", () => {
 			classifier: "decision",
 		};
 		expect(toFormValues(saved).classifier).toBe("decision");
+		expect(toFormValues({ ...saved, classifier: "llm" }).classifier).toBe("llm");
 		expect(toFormValues({ ...saved, classifier: "" as never }).classifier).toBe("semantic");
 	});
 
@@ -578,6 +579,12 @@ describe("router configuration state", () => {
 		).toBe(true);
 	});
 
+	test("treats the llm classifier as configured once it has its model", () => {
+		const keywords = { simple_keywords: ["a"], medium_keywords: ["b"], complex_keywords: ["c"] };
+		expect(isRouterConfigured({ keywords, classifier: "llm" })).toBe(false);
+		expect(isRouterConfigured({ keywords, classifier: "llm", llm: { provider: "openai", model: "gpt-4o-mini" } })).toBe(true);
+	});
+
 	test("does not treat phrases alone as configured", () => {
 		expect(
 			isRouterConfigured({
@@ -680,5 +687,30 @@ describe("semantic complexity phrase limit", () => {
 
 	test("does not cap a form that will omit the semantic block", () => {
 		expect(analyzerConfigSchema.safeParse(formValues(750, false)).success).toBe(true);
+	});
+});
+describe("llm classifier", () => {
+	const keywords = { simple_keywords: ["a"], medium_keywords: ["b"], complex_keywords: ["c"] };
+
+	test("needs its model and names the classifier in the error", () => {
+		const parsed = analyzerConfigSchema.safeParse({ ...DEFAULT_FORM_VALUES, classifier: "llm", keywords });
+		expect(parsed.success).toBe(false);
+		const paths = parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join("."));
+		expect(paths).toEqual(expect.arrayContaining(["llm.provider", "llm.model"]));
+	});
+
+	test("saves with its model and needs no semantic block", () => {
+		const values = {
+			...DEFAULT_FORM_VALUES,
+			classifier: "llm" as const,
+			keywords,
+			session: { enabled: true },
+			llm: { ...DEFAULT_FORM_VALUES.llm, provider: "openai", model: "gpt-4o-mini" },
+		};
+		expect(analyzerConfigSchema.safeParse(values).success).toBe(true);
+		const payload = toAnalyzerPayload(values);
+		expect(payload.classifier).toBe("llm");
+		expect(payload.llm).toMatchObject({ provider: "openai", model: "gpt-4o-mini" });
+		expect(payload.semantic).toBeUndefined();
 	});
 });

@@ -9,13 +9,19 @@ import type { ParseKeys } from "i18next";
 import { ArrowRight, CircleAlert, CircleCheck, CircleDashed, LoaderCircle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { DecisionProviderState } from "../formSchema";
 import { semanticWarmupFailureMessage, semanticWarmupImpactMessage } from "./classifierStatusBadge.utils";
+import type { RouterStatus } from "./routerStatus";
+
+type ComplexityKey = ParseKeys<"models", {}, "routing.complexityUi">;
+type DecisionProviderProblem = Exclude<DecisionProviderState, "configured">;
 
 // The two states below are local to the form rather than reported by the
 // gateway: nothing is embedded yet, so /semantic-status has nothing to say.
-type ClassifierState = SemanticStatusInfo["state"] | "not-configured" | "not-saved" | "loading" | "unavailable";
+// A decision model has no warmup, so its states are its provider's.
+type ClassifierState = SemanticStatusInfo["state"] | "not-configured" | "not-saved" | "loading" | "unavailable" | DecisionProviderProblem;
 
-const LABEL_KEYS: Record<ClassifierState, ParseKeys<"models", {}, "routing.complexityUi">> = {
+const LABEL_KEYS: Record<ClassifierState, ComplexityKey> = {
 	ready: "classifierReady",
 	warming: "classifierWarming",
 	failed: "classifierFailed",
@@ -24,6 +30,16 @@ const LABEL_KEYS: Record<ClassifierState, ParseKeys<"models", {}, "routing.compl
 	"not-saved": "classifierNotSaved",
 	loading: "classifierChecking",
 	unavailable: "classifierUnavailable",
+	missing: "classifierProviderMissing",
+	failing: "classifierProviderFailing",
+	"no-enabled-key": "classifierProviderNoKey",
+};
+
+// The same explanations the router page's provider alert gives.
+const DECISION_PROBLEM_KEYS: Record<DecisionProviderProblem, ComplexityKey> = {
+	missing: "providerMissing",
+	failing: "providerFailing",
+	"no-enabled-key": "providerNoKey",
 };
 
 // Every tone comes from the shared Badge variants rather than a hand-picked
@@ -39,6 +55,9 @@ const TONES: Record<ClassifierState, VariantProps<typeof badgeVariants>["variant
 	"not-saved": "default",
 	loading: "secondary",
 	unavailable: "warning",
+	missing: "warning",
+	failing: "warning",
+	"no-enabled-key": "warning",
 };
 
 function StateIcon({ state }: { state: ClassifierState }) {
@@ -47,6 +66,9 @@ function StateIcon({ state }: { state: ClassifierState }) {
 			return <CircleCheck />;
 		case "failed":
 		case "unavailable":
+		case "missing":
+		case "failing":
+		case "no-enabled-key":
 			return <CircleAlert />;
 		case "warming":
 		case "loading":
@@ -97,7 +119,8 @@ export function ClassifierStatusBadge({
 }) {
 	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
 
-	const state: ClassifierState = isNotConfigured
+	// The header badge is shown for the semantic classifier only.
+	const state: Exclude<ClassifierState, DecisionProviderProblem> = isNotConfigured
 		? "not-configured"
 		: isNotSaved
 			? "not-saved"
@@ -158,11 +181,7 @@ export function ClassifierStatusBadge({
 				)}
 
 				{state === "failed" && status && (
-					<p
-						className={
-							status.serving_previous || semanticFallback !== "none" ? "text-amber-700 dark:text-amber-400" : "text-destructive"
-						}
-					>
+					<p className={status.serving_previous || semanticFallback !== "none" ? "text-amber-700 dark:text-amber-400" : "text-destructive"}>
 						{semanticWarmupImpactMessage(status, semanticFallback)}
 					</p>
 				)}
@@ -206,5 +225,40 @@ export function ClassifierStatusBadge({
 					))}
 			</PopoverContent>
 		</Popover>
+	);
+}
+const ROUTER_STATUS_TONES: Record<RouterStatus, VariantProps<typeof badgeVariants>["variant"]> = {
+	live: "success",
+	draft: "warning",
+	warming: "secondary",
+	failed: "destructive",
+};
+
+// RouterStatusChip is a router's status as the list and its page show it. A
+// decision router whose provider cannot serve it says why on hover.
+export function RouterStatusChip({
+	status,
+	testId,
+	decision,
+}: {
+	status: RouterStatus;
+	testId: string;
+	decision?: { provider: string; state: DecisionProviderState };
+}) {
+	const { t } = useTranslation("models", { keyPrefix: "routing.modelRouters" });
+	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
+	const problem =
+		decision && decision.state !== "configured" ? tcpx(DECISION_PROBLEM_KEYS[decision.state], { provider: decision.provider }) : undefined;
+	return (
+		<span
+			data-testid={testId}
+			data-state-value={status}
+			title={problem}
+			className={cn(badgeVariants({ variant: ROUTER_STATUS_TONES[status] }), "gap-1.5")}
+		>
+			{status === "warming" && <LoaderCircle className="animate-spin" />}
+			{status === "failed" && <CircleAlert />}
+			<span>{t(`status.${status}`)}</span>
+		</span>
 	);
 }

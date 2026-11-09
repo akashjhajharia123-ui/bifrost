@@ -13,7 +13,6 @@ import {
 } from "@/lib/store/apis/governanceApi";
 import {
 	COMPLEXITY_TIER_VALUES,
-	DEFAULT_COMPLEXITY_ROUTER_ID,
 	DecisionTier,
 	SUGGESTION_CATEGORIES,
 	Suggestion,
@@ -31,7 +30,7 @@ import { categoryCounts, filterSuggestions, StagedSuggestion } from "./suggestio
 
 interface Props {
 	// The router these suggestions belong to.
-	routerId?: string;
+	routerId: string;
 	canUpdate: boolean;
 	// Whether the saved config has suggestions on; the form may differ until
 	// it is saved.
@@ -52,7 +51,7 @@ type ListTab = "open" | "dismissed";
 // stages its phrases into the draft phrase lists, where they can be edited or
 // taken back; the page's Save applies them and marks the suggestion accepted.
 export default function SuggestionsTab({
-	routerId = DEFAULT_COMPLEXITY_ROUTER_ID,
+	routerId,
 	canUpdate,
 	enabled,
 	lookbackDays,

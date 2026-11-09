@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { clefModelFromProvider, isDecisionProvider } from "@/lib/utils/decisionModelProviders";
 import { Link } from "@tanstack/react-router";
 import type { ParseKeys } from "i18next";
-import { ArrowRight, Check, ChevronRight, Info, LoaderCircle, Pencil, RotateCcw, Scale, TriangleAlert, Waypoints } from "lucide-react";
+import { ArrowRight, Bot, ChevronRight, Info, LoaderCircle, Pencil, RotateCcw, Scale, TriangleAlert, Waypoints } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -37,7 +37,7 @@ import {
 	type UseFormSetValue,
 } from "react-hook-form";
 import { decisionTimeoutFieldValue, type AnalyzerFormValues, type DecisionProviderState } from "../formSchema";
-import { FieldLabel, InfoTip, SectionHeading } from "./formPrimitives";
+import { FieldLabel, InfoTip, RadioCards, SectionHeading } from "./formPrimitives";
 
 // The Complexity Router page's sections. Each binds to the page's single form.
 
@@ -161,19 +161,30 @@ interface LLMPromptSectionProps {
 	// prompt the operator cleared on purpose.
 	onEdit: () => void;
 	onReset: () => void;
+	// "primary" when the llm is the router's classifier; its prompt then decides every request.
+	variant?: "primary" | "fallback";
 }
 
 // LLMPromptSection edits the fallback classifier's system prompt. It needs
 // width and room to iterate, so it sits on the page below the phrase lists
 // rather than in the sheet with the fallback's other settings, and only shows
 // while the llm fallback is on, because that is the only time it runs.
-export function LLMPromptSection({ control, error, canUpdate, defaultPrompt, livePrompt, onEdit, onReset }: LLMPromptSectionProps) {
+export function LLMPromptSection({
+	control,
+	error,
+	canUpdate,
+	defaultPrompt,
+	livePrompt,
+	onEdit,
+	onReset,
+	variant = "fallback",
+}: LLMPromptSectionProps) {
 	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
 	return (
 		<div className="space-y-3">
 			<SectionHeading
-				title={tcpx("fallbackPromptTitle")}
-				description={tcpx("fallbackPromptDescription")}
+				title={tcpx(variant === "primary" ? "llmPromptTitle" : "fallbackPromptTitle")}
+				description={tcpx(variant === "primary" ? "llmPromptDescription" : "fallbackPromptDescription")}
 				aside={
 					<Button
 						type="button"
@@ -818,7 +829,10 @@ const CLASSIFIER_OPTIONS: {
 }[] = [
 	{ value: "decision", title: "classifierNameDecision", description: "classifierDecisionCardDesc" },
 	{ value: "semantic", title: "classifierNameSemantic", description: "classifierSemanticCardDesc" },
+	{ value: "llm", title: "classifierNameLlm", description: "classifierLlmCardDesc" },
 ];
+
+const CLASSIFIER_ICONS: Record<Classifier, typeof Scale> = { decision: Scale, semantic: Waypoints, llm: Bot };
 
 // ClassifierChoice is the one decision everything else depends on, so each
 // option is an explained card rather than an entry in a dropdown. Anything a
@@ -826,82 +840,21 @@ const CLASSIFIER_OPTIONS: {
 export function ClassifierChoice({ value, onChange }: { value: Classifier | undefined; onChange: (value: Classifier) => void }) {
 	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
 	return (
-		<div role="radiogroup" aria-label={tcpx("stepClassifier")} className="grid gap-3 sm:grid-cols-2">
-			{CLASSIFIER_OPTIONS.map((option) => {
-				const selected = option.value === value;
-				return (
-					<button
-						key={option.value}
-						type="button"
-						role="radio"
-						aria-checked={selected}
-						onClick={() => onChange(option.value)}
-						data-testid={`complexity-router-classifier-option-${option.value}`}
-						className={cn(
-							"hover:bg-accent/50 flex h-full flex-col gap-2 rounded-md border p-4 text-left transition-colors",
-							selected && "border-primary bg-primary/5",
-						)}
-					>
-						<div className="flex w-full items-center gap-2">
-							{option.value === "decision" ? (
-								<Scale className="text-muted-foreground size-4" />
-							) : (
-								<Waypoints className="text-muted-foreground size-4" />
-							)}
-							<span className="text-sm font-medium">{tcpx(option.title)}</span>
-							{selected && <Check className="ml-auto size-4 text-green-600" />}
-						</div>
-						<p className="text-muted-foreground text-xs leading-relaxed">{tcpx(option.description)}</p>
-					</button>
-				);
+		<RadioCards
+			value={value}
+			onChange={onChange}
+			ariaLabel={tcpx("stepClassifier")}
+			testIdPrefix="complexity-router-classifier-option"
+			columns={3}
+			options={CLASSIFIER_OPTIONS.map((option) => {
+				const Icon = CLASSIFIER_ICONS[option.value];
+				return {
+					value: option.value,
+					title: tcpx(option.title),
+					description: tcpx(option.description),
+					icon: <Icon className="text-muted-foreground size-4" />,
+				};
 			})}
-		</div>
-	);
-}
-
-interface StepRailProps {
-	steps: { key: string; title: string; enabled: boolean }[];
-	currentIndex: number;
-	onSelect: (index: number) => void;
-}
-
-// StepRail is the page's step nav. It takes the row style of the Edge inventory
-// nav, and is narrower still: two short labels need little width, and every
-// pixel it gives back goes to the phrase lists.
-export function StepRail({ steps, currentIndex, onSelect }: StepRailProps) {
-	const { t: tcpx } = useTranslation("models", { keyPrefix: "routing.complexityUi" });
-	return (
-		<nav className="flex w-full shrink-0 gap-1 overflow-x-auto md:block md:w-44" aria-label={tcpx("stepsAria")}>
-			{steps.map((step, index) => {
-				const current = index === currentIndex;
-				return (
-					<button
-						key={step.key}
-						type="button"
-						onClick={() => !current && onSelect(index)}
-						disabled={!step.enabled}
-						aria-current={current ? "step" : undefined}
-						data-testid={`complexity-router-step-${step.key}`}
-						className={cn(
-							"mb-1 flex h-8 w-auto shrink-0 items-center gap-2 rounded-sm border px-3 text-sm md:w-full md:min-w-0",
-							current
-								? "bg-secondary font-medium"
-								: "text-muted-foreground hover:bg-secondary border-transparent hover:border enabled:cursor-pointer",
-							!step.enabled && "cursor-not-allowed opacity-50 hover:border-transparent hover:bg-transparent",
-						)}
-					>
-						<span
-							className={cn(
-								"flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
-								current ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
-							)}
-						>
-							{index + 1}
-						</span>
-						{step.title}
-					</button>
-				);
-			})}
-		</nav>
+		/>
 	);
 }

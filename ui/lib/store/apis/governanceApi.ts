@@ -43,11 +43,16 @@ import {
 	VirtualKey,
 } from "@/lib/types/governance";
 import {
-	AnalyzerConfig,
+	ModelRouter,
+	ModelRouterDefaults,
+	ModelRouterList,
+	ModelRouterTarget,
+	ModelRoutingRule,
+	ModelRoutingRuleList,
+	ModelRoutingRuleRequest,
 	PhraseTestRequest,
 	PhraseTestResult,
 	SemanticStatusInfo,
-	DEFAULT_COMPLEXITY_ROUTER_ID,
 	SuggestionDetail,
 	SuggestionRun,
 	SuggestionRunEstimate,
@@ -869,110 +874,133 @@ export const governanceApi = baseApi.injectEndpoints({
 			},
 		}),
 
-		// Complexity Analyzer Config
-		getComplexityAnalyzerConfig: builder.query<AnalyzerConfig, void>({
-			query: () => ({
-				url: "/routing/complexity-analyzer-config",
-				method: "GET",
-			}),
-			providesTags: ["ComplexityAnalyzerConfig"],
+		// Model routers. Each router is the complexity analyzer config plus an
+		// identity. The legacy analyzer config endpoint edits the default router,
+		// so its tag refreshes these too.
+		getModelRouters: builder.query<ModelRouterList, void>({
+			query: () => ({ url: "/routing/model-routers", method: "GET" }),
+			providesTags: ["ModelRouters", "ComplexityAnalyzerConfig"],
+		}),
+		getModelRouter: builder.query<ModelRouter, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "GET" }),
+			providesTags: ["ModelRouters", "ComplexityAnalyzerConfig"],
+		}),
+		// What a new router starts from; it never changes while the gateway runs.
+		getModelRouterDefaults: builder.query<ModelRouterDefaults, void>({
+			query: () => ({ url: "/routing/model-routers/defaults", method: "GET" }),
+		}),
+		// Replaces the model each tier gets, leaving the router's classifier as it is.
+		setModelRouterTargets: builder.mutation<ModelRouter, { id: string; targets: ModelRouterTarget[] }>({
+			query: ({ id, targets }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/targets`, method: "PUT", body: { targets } }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		createModelRouter: builder.mutation<ModelRouter, Omit<ModelRouter, "id"> & { id?: string }>({
+			query: (body) => ({ url: "/routing/model-routers", method: "POST", body }),
+			invalidatesTags: ["ModelRouters"],
+		}),
+		// A save changes whether suggestions run, so their tag is refreshed too.
+		updateModelRouter: builder.mutation<ModelRouter, ModelRouter>({
+			query: ({ id, ...body }) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "PUT", body }),
+			invalidatesTags: ["ModelRouters", "ComplexityAnalyzerConfig"],
+		}),
+		deleteModelRouter: builder.mutation<void, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}`, method: "DELETE" }),
+			invalidatesTags: ["ModelRouters", "ComplexitySuggestions"],
+		}),
+		resetModelRouter: builder.mutation<ModelRouter, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/reset`, method: "POST" }),
+			invalidatesTags: ["ModelRouters", "ComplexityAnalyzerConfig"],
+		}),
+		// Readiness is derived from the saved configuration — a save or a reset
+		// restarts warmup — so it has to be invalidated by the same tag, or the
+		// page keeps showing the state the classifier was in before the edit.
+		getModelRouterStatus: builder.query<SemanticStatusInfo, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/status`, method: "GET" }),
+			providesTags: ["ModelRouters", "ComplexityAnalyzerConfig"],
+		}),
+		retryModelRouterWarmup: builder.mutation<SemanticStatusInfo, string>({
+			query: (id) => ({ url: `/routing/model-routers/${encodeURIComponent(id)}/status/retry`, method: "POST" }),
+			invalidatesTags: ["ModelRouters"],
 		}),
 
-		updateComplexityAnalyzerConfig: builder.mutation<AnalyzerConfig, AnalyzerConfig>({
-			query: (data) => ({
-				url: "/routing/complexity-analyzer-config",
-				method: "PUT",
-				body: data,
-			}),
-			invalidatesTags: ["ComplexityAnalyzerConfig"],
+		// Model routing rules: which requests a model router classifies.
+		getModelRoutingRules: builder.query<ModelRoutingRuleList, void>({
+			query: () => ({ url: "/routing/model-routing-rules", method: "GET" }),
+			providesTags: ["ModelRoutingRules"],
+		}),
+		createModelRoutingRule: builder.mutation<ModelRoutingRule, ModelRoutingRuleRequest>({
+			query: (body) => ({ url: "/routing/model-routing-rules", method: "POST", body }),
+			invalidatesTags: ["ModelRoutingRules"],
+		}),
+		updateModelRoutingRule: builder.mutation<ModelRoutingRule, { id: string; data: ModelRoutingRuleRequest }>({
+			query: ({ id, data }) => ({ url: `/routing/model-routing-rules/${encodeURIComponent(id)}`, method: "PUT", body: data }),
+			invalidatesTags: ["ModelRoutingRules"],
+		}),
+		deleteModelRoutingRule: builder.mutation<void, string>({
+			query: (id) => ({ url: `/routing/model-routing-rules/${encodeURIComponent(id)}`, method: "DELETE" }),
+			invalidatesTags: ["ModelRoutingRules"],
 		}),
 
-		getComplexitySemanticStatus: builder.query<SemanticStatusInfo, void>({
-			query: () => ({
-				url: "/routing/complexity-analyzer-status",
-				method: "GET",
-			}),
-			// Readiness is derived from the saved configuration — a save or a reset
-			// restarts warmup — so it has to be invalidated by the same tag, or the
-			// page keeps showing the state the classifier was in before the edit.
-			providesTags: ["ComplexityAnalyzerConfig"],
-		}),
-		retryComplexitySemanticWarmup: builder.mutation<SemanticStatusInfo, void>({
-			query: () => ({
-				url: "/routing/complexity-analyzer-status/retry",
-				method: "POST",
-			}),
-			invalidatesTags: ["ComplexityAnalyzerConfig"],
-		}),
-		resetComplexityAnalyzerConfig: builder.mutation<AnalyzerConfig, void>({
-			query: () => ({
-				url: "/routing/complexity-analyzer-config/reset",
-				method: "POST",
-			}),
-			invalidatesTags: ["ComplexityAnalyzerConfig"],
-		}),
-
-		// Phrase suggestions. Every call is about one router; routerId defaults
-		// to the gateway's one router until it can define several.
-		getComplexitySuggestions: builder.query<SuggestionsList, { statuses: SuggestionStatus[]; routerId?: string }>({
+		// Phrase suggestions. Every call is about one router, named by routerId.
+		getComplexitySuggestions: builder.query<SuggestionsList, { statuses: SuggestionStatus[]; routerId: string }>({
 			query: ({ statuses, routerId }) => ({
 				url: "/routing/complexity-suggestions",
 				method: "GET",
-				params: { status: statuses.join(","), router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID },
+				params: { status: statuses.join(","), router_id: routerId },
 			}),
 			// A config save changes whether suggestions are on and when they run.
 			providesTags: ["ComplexitySuggestions", "ComplexityAnalyzerConfig"],
 		}),
-		getComplexitySuggestion: builder.query<SuggestionDetail, { id: string; routerId?: string }>({
+		getComplexitySuggestion: builder.query<SuggestionDetail, { id: string; routerId: string }>({
 			query: ({ id, routerId }) => ({
 				url: `/routing/complexity-suggestions/${encodeURIComponent(id)}`,
 				method: "GET",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID },
+				params: { router_id: routerId },
 			}),
 			providesTags: (_result, _error, { id }) => [{ type: "ComplexitySuggestions", id }],
 		}),
 		updateComplexitySuggestionStatus: builder.mutation<
 			Suggestion,
-			{ id: string; status: Exclude<SuggestionStatus, "superseded">; routerId?: string }
+			{ id: string; status: Exclude<SuggestionStatus, "superseded">; routerId: string }
 		>({
 			query: ({ id, status, routerId }) => ({
 				url: `/routing/complexity-suggestions/${encodeURIComponent(id)}/status`,
 				method: "PUT",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID },
+				params: { router_id: routerId },
 				body: { status },
 			}),
 			invalidatesTags: ["ComplexitySuggestions"],
 		}),
-		testComplexitySuggestionPhrases: builder.mutation<PhraseTestResult, PhraseTestRequest & { routerId?: string }>({
+		testComplexitySuggestionPhrases: builder.mutation<PhraseTestResult, PhraseTestRequest & { routerId: string }>({
 			query: ({ routerId, ...body }) => ({
 				url: "/routing/complexity-suggestions/test",
 				method: "POST",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID },
+				params: { router_id: routerId },
 				body,
 			}),
 		}),
-		getComplexitySuggestionRuns: builder.query<{ runs: SuggestionRun[]; next_run_at?: string }, { limit?: number; routerId?: string }>({
+		getComplexitySuggestionRuns: builder.query<{ runs: SuggestionRun[]; next_run_at?: string }, { limit?: number; routerId: string }>({
 			query: ({ limit, routerId }) => ({
 				url: "/routing/complexity-suggestions/runs",
 				method: "GET",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID, ...(limit ? { limit } : {}) },
+				params: { router_id: routerId, ...(limit ? { limit } : {}) },
 			}),
 			providesTags: ["ComplexitySuggestions"],
 		}),
-		getComplexitySuggestionRunEstimate: builder.query<SuggestionRunEstimate, { window: SuggestionRunWindow; routerId?: string }>({
+		getComplexitySuggestionRunEstimate: builder.query<SuggestionRunEstimate, { window: SuggestionRunWindow; routerId: string }>({
 			query: ({ window, routerId }) => ({
 				url: "/routing/complexity-suggestions/runs/estimate",
 				method: "GET",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID, window },
+				params: { router_id: routerId, window },
 			}),
 			// Captured traffic grows by the minute; an estimate is read fresh.
 			keepUnusedDataFor: 0,
 		}),
-		startComplexitySuggestionRun: builder.mutation<{ run_id: string }, { window?: SuggestionRunWindow; routerId?: string }>({
+		startComplexitySuggestionRun: builder.mutation<{ run_id: string }, { window?: SuggestionRunWindow; routerId: string }>({
 			query: ({ window, routerId }) => ({
 				url: "/routing/complexity-suggestions/runs",
 				method: "POST",
-				params: { router_id: routerId ?? DEFAULT_COMPLEXITY_ROUTER_ID, ...(window ? { window } : {}) },
+				params: { router_id: routerId, ...(window ? { window } : {}) },
 			}),
 			invalidatesTags: ["ComplexitySuggestions"],
 		}),
@@ -1041,12 +1069,23 @@ export const {
 	useUpdateProviderGovernanceMutation,
 	useDeleteProviderGovernanceMutation,
 
-	// Complexity Analyzer Config
-	useGetComplexityAnalyzerConfigQuery,
-	useUpdateComplexityAnalyzerConfigMutation,
-	useResetComplexityAnalyzerConfigMutation,
-	useGetComplexitySemanticStatusQuery,
-	useRetryComplexitySemanticWarmupMutation,
+	// Model routers and model routing rules
+	useGetModelRoutersQuery,
+	useGetModelRouterQuery,
+	useGetModelRouterDefaultsQuery,
+	useSetModelRouterTargetsMutation,
+	useCreateModelRouterMutation,
+	useUpdateModelRouterMutation,
+	useDeleteModelRouterMutation,
+	useResetModelRouterMutation,
+	useGetModelRouterStatusQuery,
+	useRetryModelRouterWarmupMutation,
+	useGetModelRoutingRulesQuery,
+	useCreateModelRoutingRuleMutation,
+	useUpdateModelRoutingRuleMutation,
+	useDeleteModelRoutingRuleMutation,
+
+	// Phrase suggestions
 	useGetComplexitySuggestionsQuery,
 	useGetComplexitySuggestionQuery,
 	useUpdateComplexitySuggestionStatusMutation,

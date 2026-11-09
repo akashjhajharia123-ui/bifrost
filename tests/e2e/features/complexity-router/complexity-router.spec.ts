@@ -1,6 +1,8 @@
 import { expect, test } from '../../core/fixtures/base.fixture'
 
-test.describe('Complexity Router', () => {
+// The router these tests open is the one the complexity config was moved into,
+// under the id it keeps; nothing about that id is special.
+test.describe('Model Router: complexity router', () => {
   test.describe('Decision Model Picker', () => {
     // The saved config, the providers (OpenRouter, Cloudflare, Perplexity, Ollama and a custom OpenAI-based one),
     // and the model listing are mocked, so the test does not depend on decisions
@@ -17,11 +19,14 @@ test.describe('Complexity Router', () => {
     test.beforeEach(async ({ page }) => {
       modelQueries = []
       await page.route(
-        (url) => url.pathname === '/api/routing/complexity-analyzer-config',
+        (url) => url.pathname === '/api/routing/model-routers/default',
         async (route) => {
           if (route.request().method() !== 'GET') return route.continue()
           await route.fulfill({
             json: {
+              id: 'default',
+              name: 'Complexity router',
+              answers_complexity_tier: true,
               classifier: 'decision',
               keywords: {
                 simple_keywords: ['simple'],
@@ -143,7 +148,7 @@ test.describe('Complexity Router', () => {
         savedModel = saved
         decisionModels = decisions
         chatModels = chat
-        await page.goto('/workspace/complexity-router')
+        await page.goto('/workspace/model-routers?router=default&tab=configuration')
         await page.getByTestId('complexity-router-decision-settings-button').click()
         await expect(page.getByTestId('complexity-router-decision-sheet')).toBeVisible({ timeout: 5000 })
 
@@ -166,7 +171,7 @@ test.describe('Complexity Router', () => {
       savedModel = 'gpt-6-luna'
       decisionModels = ['gpt-6-luna']
       chatModels = ['gpt-4o-mini']
-      await page.goto('/workspace/complexity-router')
+      await page.goto('/workspace/model-routers?router=default&tab=configuration')
       await page.getByTestId('complexity-router-decision-settings-button').click()
       await expect(page.getByTestId('complexity-router-decision-sheet')).toBeVisible({ timeout: 5000 })
 
@@ -235,6 +240,9 @@ test.describe('Complexity Router', () => {
       finished_at: '2026-11-04T03:02:00Z',
     }
     const CONFIG = {
+      id: 'default',
+      name: 'Complexity router',
+      answers_complexity_tier: true,
       classifier: 'semantic',
       keywords: { simple_keywords: ['hello'], medium_keywords: ['summarize this support thread'], complex_keywords: ['design a system'] },
       semantic: { provider: 'openai', embedding_model: 'text-embedding-3-small', timeout: '2000ms', min_similarity: 0.4, vector_store: 'embedded', fallback: 'none' },
@@ -253,18 +261,18 @@ test.describe('Complexity Router', () => {
       runWindows = []
       listRouters = []
       await page.route(
-        (url) => url.pathname === '/api/routing/complexity-analyzer-config',
+        (url) => url.pathname === '/api/routing/model-routers/default',
         async (route) => {
           if (route.request().method() === 'PUT') {
             const body = route.request().postDataJSON()
             saved.push(body)
-            return route.fulfill({ json: body })
+            return route.fulfill({ json: { ...body, id: 'default' } })
           }
           return route.fulfill({ json: CONFIG })
         },
       )
       await page.route(
-        (url) => url.pathname === '/api/routing/complexity-analyzer-status',
+        (url) => url.pathname === '/api/routing/model-routers/default/status',
         (route) =>
           route.fulfill({
             json: { state: 'ready', loaded: 3, total: 3, cached_phrases: 3, suggestion_default_instructions: 'Write short reference phrases.' },
@@ -355,8 +363,14 @@ test.describe('Complexity Router', () => {
       await page.unrouteAll({ behavior: 'ignoreErrors' })
     })
 
+    test('should open the model routers list from the old complexity router URL', async ({ page }) => {
+      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await expect(page).toHaveURL(/\/workspace\/model-routers$/)
+      await expect(page.getByTestId('model-router-detail')).toHaveCount(0)
+    })
+
     test('should list pending suggestions with their reasons and examples', async ({ page }) => {
-      await page.goto('/workspace/complexity-router')
+      await page.goto('/workspace/model-routers?router=default')
       await expect(page.getByTestId('complexity-router-tab-suggestions-count')).toHaveText('2', { timeout: 10000 })
       await page.getByTestId('complexity-router-tab-suggestions').click()
 
@@ -387,17 +401,19 @@ test.describe('Complexity Router', () => {
     })
 
     test('should stage a suggestion, edit it, and accept it when the config is saved', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestion-add-sug-refund').click()
 
       // Staged: gone from the list, shown in the staged panel, and the save is pending.
       await expect(page.getByTestId('complexity-suggestion-row-sug-refund')).toHaveCount(0)
       const stagedInput = page.getByTestId('complexity-suggestions-staged-input-sug-refund-0')
       await expect(stagedInput).toHaveValue('where is my refund')
-      await expect(page.getByTestId('complexity-router-footer-note')).toContainText('1 suggested phrase staged')
 
       await stagedInput.fill('where is my refund for an order')
       await stagedInput.press('Enter')
+      // Staged phrases are part of the configuration draft, saved from its tab.
+      await page.getByTestId('model-router-tab-configuration').click()
+      await expect(page.getByTestId('complexity-router-footer-note')).toContainText('1 suggested phrase staged')
       await page.getByTestId('complexity-router-save-changes-button').click()
 
       await expect.poll(() => saved.length).toBe(1)
@@ -409,7 +425,7 @@ test.describe('Complexity Router', () => {
     })
 
     test('should take a staged suggestion back without saving it', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestion-tier-select-sug-migration').click()
       await page.getByRole('option', { name: 'Medium' }).click()
       await page.getByTestId('complexity-suggestion-add-sug-migration').click()
@@ -417,11 +433,12 @@ test.describe('Complexity Router', () => {
 
       await page.getByTestId('complexity-suggestions-staged-undo-sug-migration').click()
       await expect(page.getByTestId('complexity-suggestion-row-sug-migration')).toBeVisible()
+      await page.getByTestId('model-router-tab-configuration').click()
       await expect(page.getByTestId('complexity-router-save-changes-button')).toBeDisabled()
     })
 
     test('should dismiss a suggestion and start a run', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestion-dismiss-sug-migration').click()
       await expect.poll(() => statusCalls).toEqual([{ id: 'sug-migration', status: 'dismissed' }])
 
@@ -453,7 +470,7 @@ test.describe('Complexity Router', () => {
           return route.fulfill({ status: 500, json: { error: { message: 'log store unavailable' } } })
         },
       )
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestions-run-now-button').click()
       const estimate = page.getByTestId('complexity-suggestions-run-estimate')
       const startButton = page.getByTestId('complexity-suggestions-run-start-button')
@@ -476,7 +493,7 @@ test.describe('Complexity Router', () => {
     })
 
     test('should test an edited phrase before staging it', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestion-test-sug-refund').click()
       const dialog = page.getByTestId('complexity-phrase-test-dialog')
       await expect(dialog).toBeVisible()
@@ -491,7 +508,7 @@ test.describe('Complexity Router', () => {
     })
 
     test('should drop a phrase test result once the phrases or tier it was run on change', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestion-test-sug-refund').click()
       const result = page.getByTestId('complexity-phrase-test-result')
       const runButton = page.getByTestId('complexity-phrase-test-run-button')
@@ -552,7 +569,7 @@ test.describe('Complexity Router', () => {
             },
           }),
       )
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await expect(page.getByTestId('complexity-suggestion-row-sug-refund')).toBeVisible()
 
       await page.getByTestId('complexity-suggestions-category-select').click()
@@ -566,7 +583,7 @@ test.describe('Complexity Router', () => {
     })
 
     test('should save an interval and a first run from the settings sheet', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestions-settings-button').click()
       await expect(page.getByTestId('complexity-suggestions-settings-sheet')).toBeVisible()
 
@@ -595,7 +612,7 @@ test.describe('Complexity Router', () => {
     })
 
     test('should tie each settings error to its field for assistive tech', async ({ page }) => {
-      await page.goto('/workspace/complexity-router?tab=suggestions')
+      await page.goto('/workspace/model-routers?router=default&tab=suggestions')
       await page.getByTestId('complexity-suggestions-settings-button').click()
       await expect(page.getByTestId('complexity-suggestions-settings-sheet')).toBeVisible()
       // The instructions box has a name of its own, not only a placeholder.
