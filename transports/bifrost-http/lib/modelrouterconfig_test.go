@@ -213,6 +213,64 @@ func TestModelRouterConfigSplitModeKeepsDashboardEdits(t *testing.T) {
 	assert.Equal(t, "text-embedding-3-large", router.Semantic.EmbeddingModel)
 }
 
+// TestModelRouterConfigTargets walks a router's targets through reboots: the
+// file sets them, an entry without targets leaves dashboard targets alone, a
+// dashboard edit survives an unchanged file, a changed entry re-applies them,
+// source-of-truth mode reverts drift, and invalid targets skip the router.
+func TestModelRouterConfigTargets(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+	mini := `"targets":[{"tier":"SIMPLE","provider":"openai","model":"gpt-4o-mini","weight":1}]`
+	boot := func(sourceOfTruth bool, name, extra string) {
+		prefix := `{`
+		if sourceOfTruth {
+			prefix = `{"source_of_truth":"config.json",`
+		}
+		bootFromJSON(t, store, prefix+`"model_routers":[`+routerJSON("support", name, extra, "s", "m", "c")+`]}`)
+	}
+	models := func() []string {
+		router, err := store.GetModelRouter(ctx, "support")
+		require.NoError(t, err)
+		out := make([]string, 0, len(router.Targets))
+		for _, target := range router.Targets {
+			out = append(out, *target.Model)
+		}
+		return out
+	}
+	dashboardSets := func(model string) {
+		require.NoError(t, store.SetModelRouterTargets(ctx, "support", []tables.TableModelRouterTarget{
+			{Tier: "SIMPLE", Model: &model, Weight: 1},
+		}))
+	}
+
+	boot(false, "Support", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models())
+
+	dashboardSets("claude-haiku")
+	boot(false, "Support", mini)
+	assert.Equal(t, []string{"claude-haiku"}, models(), "a dashboard edit survives an unchanged file")
+
+	boot(false, "Support desk", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models(), "a changed entry re-applies its targets")
+
+	dashboardSets("claude-haiku")
+	boot(true, "Support desk", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models(), "source of truth reverts drift")
+
+	dashboardSets("claude-haiku")
+	boot(true, "Support desk", "")
+	assert.Equal(t, []string{"claude-haiku"}, models(), "an entry without targets leaves them alone")
+
+	boot(false, "Support desk", `"targets":[{"tier":"SIMPLE","model":"m","weight":0.5}]`)
+	assert.Equal(t, []string{"claude-haiku"}, models(), "invalid targets are not applied")
+
+	bootFromJSON(t, store, `{"model_routers":[`+routerJSON("general", "General", `"answers_complexity_tier":true,`+mini, "s", "m", "c")+`]}`)
+	general, err := store.GetModelRouter(ctx, "general")
+	require.NoError(t, err)
+	require.Len(t, general.Targets, 1, "the complexity_tier router's entry sets its targets too")
+}
+
 // TestModelRouterConfigSourceOfTruth pins config.json as the source of truth:
 // dashboard drift is reverted, undeclared routers are deleted, whichever one
 // answers complexity_tier included, the file decides which router answers it,
@@ -391,17 +449,23 @@ func TestModelRouterConfigSchema(t *testing.T) {
 	valid := `{"governance":{"complexity_analyzer_config":{"keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]}}},` +
 		`"model_routers":[` +
 		routerJSON("default", "General", `"answers_complexity_tier":true`, "s", "m", "c") + "," +
-		routerJSON("support-desk_2", "Support", `"description":"Support desk traffic",`+semantic+`,"session":{"enabled":true}`, "s", "m", "c") +
+		routerJSON("support-desk_2", "Support", `"description":"Support desk traffic",`+semantic+`,"session":{"enabled":true},`+
+			`"targets":[{"tier":"COMPLEX","provider":"anthropic","model":"claude-opus","weight":0.5,"fallbacks":["openai/gpt-4o"]},{"tier":"COMPLEX","provider":"anthropic","model":"claude-sonnet","weight":0.5}]`, "s", "m", "c") + "," +
+		routerJSON("llm-router", "LLM", `"classifier":"llm","llm":{"provider":"openai","model":"gpt-4o-mini"},"session":{"enabled":true}`, "s", "m", "c") +
 		`]}`
 	require.NoError(t, ValidateConfigSchema([]byte(valid), schema))
 
 	invalid := map[string]string{
-		"list under governance":    `{"governance":{"model_routers":[` + routerJSON("support", "Support", "", "s", "m", "c") + `]}}`,
-		"id with a space":          `{"model_routers":[` + routerJSON("support desk", "Support", "", "s", "m", "c") + `]}`,
-		"missing name":             `{"model_routers":[{"id":"support","keywords":{"simple_keywords":["s"],"medium_keywords":["m"],"complex_keywords":["c"]}}]}`,
-		"unknown field":            `{"model_routers":[` + routerJSON("support", "Support", `"phrases":["s"]`, "s", "m", "c") + `]}`,
-		"session without semantic": `{"model_routers":[` + routerJSON("support", "Support", `"session":{"enabled":true}`, "s", "m", "c") + `]}`,
-		"flag not a boolean":       `{"model_routers":[` + routerJSON("support", "Support", `"answers_complexity_tier":"yes"`, "s", "m", "c") + `]}`,
+		"list under governance":        `{"governance":{"model_routers":[` + routerJSON("support", "Support", "", "s", "m", "c") + `]}}`,
+		"id with a space":              `{"model_routers":[` + routerJSON("support desk", "Support", "", "s", "m", "c") + `]}`,
+		"missing name":                 `{"model_routers":[{"id":"support","keywords":{"simple_keywords":["s"],"medium_keywords":["m"],"complex_keywords":["c"]}}]}`,
+		"unknown field":                `{"model_routers":[` + routerJSON("support", "Support", `"phrases":["s"]`, "s", "m", "c") + `]}`,
+		"session without semantic":     `{"model_routers":[` + routerJSON("support", "Support", `"session":{"enabled":true}`, "s", "m", "c") + `]}`,
+		"llm without an llm block":     `{"model_routers":[` + routerJSON("support", "Support", `"classifier":"llm"`, "s", "m", "c") + `]}`,
+		"unknown target tier":          `{"model_routers":[` + routerJSON("support", "Support", `"targets":[{"tier":"HARD","model":"m","weight":1}]`, "s", "m", "c") + `]}`,
+		"target key without provider":  `{"model_routers":[` + routerJSON("support", "Support", `"targets":[{"tier":"SIMPLE","model":"m","key_id":"k","weight":1}]`, "s", "m", "c") + `]}`,
+		"suggestions on an llm router": `{"model_routers":[` + routerJSON("support", "Support", semantic+`,"classifier":"llm","llm":{"provider":"openai","model":"gpt-4o-mini"},"suggestions":{"enabled":true}`, "s", "m", "c") + `]}`,
+		"flag not a boolean":           `{"model_routers":[` + routerJSON("support", "Support", `"answers_complexity_tier":"yes"`, "s", "m", "c") + `]}`,
 	}
 	for name, config := range invalid {
 		t.Run(name, func(t *testing.T) {
@@ -451,4 +515,139 @@ func TestModelRouterConfigLoadConfigEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Support desk traffic", support.Description)
 	assert.Equal(t, []string{"support-simple"}, support.Keywords.SimpleKeywords)
+}
+
+// ruleJSON renders one model_routing_rules entry on routerID, plus any extra
+// fields.
+func ruleJSON(id, routerID, extra string) string {
+	entry := fmt.Sprintf(`{"id":%q,"name":%q,"model_router_id":%q`, id, id, routerID)
+	if extra != "" {
+		entry += "," + extra
+	}
+	return entry + "}"
+}
+
+// TestModelRoutingRuleConfigSync walks a config.json rule through reboots: it
+// is created, an unchanged file writes nothing, a dashboard edit survives
+// until the file's entry changes, and source-of-truth mode reverts drift.
+func TestModelRoutingRuleConfigSync(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+	boot := func(sourceOfTruth bool, extra string) {
+		prefix := `{`
+		if sourceOfTruth {
+			prefix = `{"source_of_truth":"config.json",`
+		}
+		bootFromJSON(t, store, prefix+`"model_routers":[`+routerJSON("general", "General", "", "s", "m", "c")+`],`+
+			`"model_routing_rules":[`+ruleJSON("desk", "general", extra)+`]}`)
+	}
+	row := func() tables.TableModelRoutingRule {
+		var r tables.TableModelRoutingRule
+		require.NoError(t, store.ExecuteTransaction(ctx, func(tx *gorm.DB) error { return tx.First(&r, "id = ?", "desk").Error }))
+		return r
+	}
+
+	boot(false, `"priority":1`)
+	rule, err := store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+	assert.NotEmpty(t, rule.ConfigHash)
+	created := row().UpdatedAt
+
+	boot(false, `"priority":1`)
+	assert.Equal(t, created, row().UpdatedAt, "an unchanged file writes nothing")
+
+	rule.Description = "edited in the dashboard"
+	require.NoError(t, store.UpdateModelRoutingRule(ctx, rule))
+	boot(false, `"priority":1`)
+	rule, err = store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+	assert.Equal(t, "edited in the dashboard", rule.Description, "a dashboard edit survives an unchanged file")
+
+	boot(false, `"priority":2`)
+	rule, err = store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+	assert.Equal(t, 2, rule.Priority)
+	assert.Empty(t, rule.Description, "a changed entry re-applies the whole rule")
+
+	rule.Description = "drift"
+	require.NoError(t, store.UpdateModelRoutingRule(ctx, rule))
+	boot(true, `"priority":2`)
+	rule, err = store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+	assert.Empty(t, rule.Description, "source of truth reverts drift")
+}
+
+// TestModelRoutingRuleConfigSkipsBadEntries pins that an entry this version
+// would route wrongly is logged and skipped while the rest apply.
+func TestModelRoutingRuleConfigSkipsBadEntries(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+
+	bootFromJSON(t, store, `{"model_routers":[`+routerJSON("general", "General", "", "s", "m", "c")+`],"model_routing_rules":[`+
+		ruleJSON("tier-condition", "general", `"priority":1,"cel_expression":"complexity_tier == \"SIMPLE\""`)+","+
+		ruleJSON("ghost-router", "ghost", `"priority":2`)+","+
+		ruleJSON("user-scope", "general", `"priority":3,"scope":"user","scope_id":"alex"`)+","+
+		ruleJSON("missing-team", "general", `"priority":4,"scope":"team","scope_id":"no-such-team"`)+","+
+		ruleJSON("good", "general", `"priority":5`)+","+
+		ruleJSON("good", "general", `"priority":6`)+
+		`]}`)
+
+	rules, err := store.GetModelRoutingRules(ctx)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	assert.Equal(t, "good", rules[0].ID)
+	assert.Equal(t, 5, rules[0].Priority, "a repeated id keeps its first declaration")
+}
+
+// TestModelRoutingRuleConfigPrunesBeforeRouters pins source-of-truth order:
+// rules the file drops are deleted before the routers they name, so a router
+// that is also dropped is not refused as still in use, and a dropped router a
+// kept rule moves off is deleted once the rule has moved.
+func TestModelRoutingRuleConfigPrunesBeforeRouters(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+	bootFromJSON(t, store, `{"model_routers":[`+routerJSON("support", "Support", "", "s", "m", "c")+`],`+
+		`"model_routing_rules":[`+ruleJSON("desk", "support", "")+`]}`)
+	_, err := store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+
+	bootFromJSON(t, store, `{"source_of_truth":"config.json","model_routers":[],"model_routing_rules":[]}`)
+
+	_, err = store.GetModelRoutingRule(ctx, "desk")
+	require.ErrorIs(t, err, configstore.ErrNotFound)
+	requireModelRouterAbsent(t, store, "support")
+
+	// A rule the file keeps but moves to a new router no longer holds the
+	// dropped router in place: it is pruned once the rule has moved.
+	bootFromJSON(t, store, `{"model_routers":[`+routerJSON("support", "Support", "", "s", "m", "c")+`],`+
+		`"model_routing_rules":[`+ruleJSON("desk", "support", "")+`]}`)
+	bootFromJSON(t, store, `{"source_of_truth":"config.json","model_routers":[`+routerJSON("billing", "Billing", "", "s", "m", "c")+`],`+
+		`"model_routing_rules":[`+ruleJSON("desk", "billing", "")+`]}`)
+
+	moved, err := store.GetModelRoutingRule(ctx, "desk")
+	require.NoError(t, err)
+	assert.Equal(t, "billing", moved.ModelRouterID)
+	requireModelRouterAbsent(t, store, "support")
+}
+
+// TestModelRoutingRuleConfigSchema pins the model_routing_rules schema.
+func TestModelRoutingRuleConfigSchema(t *testing.T) {
+	schema := loadLocalSchema(t)
+	valid := `{"model_routing_rules":[{"id":"desk","name":"Support desk","model_router_id":"support","cel_expression":"model == \"engineering-assistant\"","query":{"combinator":"and","rules":[]},"scope":"team","scope_id":"team-1","priority":2}]}`
+	require.NoError(t, ValidateConfigSchema([]byte(valid), schema))
+
+	invalid := map[string]string{
+		"missing router":    `{"model_routing_rules":[{"id":"r","name":"r"}]}`,
+		"unknown field":     `{"model_routing_rules":[{"id":"r","name":"r","model_router_id":"default","chain_rule":true}]}`,
+		"targets on a rule": `{"model_routing_rules":[{"id":"r","name":"r","model_router_id":"default","targets":[{"tier":"SIMPLE","model":"m","weight":1}]}]}`,
+		"user scope":        `{"model_routing_rules":[{"id":"r","name":"r","model_router_id":"default","scope":"user","scope_id":"u"}]}`,
+	}
+	for name, config := range invalid {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, ValidateConfigSchema([]byte(config), schema))
+		})
+	}
 }

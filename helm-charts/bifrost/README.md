@@ -17,6 +17,9 @@ Official Helm charts for deploying [Bifrost](https://github.com/maximhq/bifrost)
 - Added `bifrost.mcp.clientConfigs[].perUserDiscovery` (`per_user_discovery`): discover each caller's tools with their own credential. Needs a per-user `authType`.
 - `sse`, `stdio` and `websocket` MCP clients now refuse per-user auth types at render time.
 - `bifrost.governance.routingRules[].id` (`governance.routing_rules[].id`) is now optional: a rule without one is matched by `name`, `scope` and `scope_id`.
+- Added `bifrost.modelRouters` (`model_routers`): named model routers, each a complexity classifier (`semantic`, `decision` or `llm`) with its own Simple, Medium and Complex phrases and the model each tier gets (`targets`); the entry with `answers_complexity_tier: true` is the router routing rules read `complexity_tier` from. While `modelRouters` is set, `bifrost.governance.complexityAnalyzerConfig` is ignored: copy those settings into an entry with `answers_complexity_tier: true` before adding a named router.
+- Added `bifrost.modelRoutingRules` (`model_routing_rules`): rules matched after the routing rules that decide which requests a model router classifies.
+- Added `suggestions` to `bifrost.governance.complexityAnalyzerConfig` (`governance.complexity_analyzer_config.suggestions`): phrase suggestion settings for the router that answers `complexity_tier`, which the chart's schema rejected.
 
 ### 2.1.47
 

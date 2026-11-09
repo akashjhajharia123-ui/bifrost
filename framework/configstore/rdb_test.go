@@ -48,6 +48,8 @@ func setupRDBTestStore(t *testing.T) *RDBConfigStore {
 		&tables.TableClientConfig{},
 		&tables.TableGovernanceConfig{},
 		&tables.TableModelRouter{},
+		&tables.TableModelRoutingRule{},
+		&tables.TableModelRouterTarget{},
 		&tables.TablePlugin{},
 		&tables.TableMCPClient{},
 		&tables.TableMCPLibrary{},

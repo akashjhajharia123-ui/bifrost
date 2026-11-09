@@ -234,6 +234,7 @@ type ConfigData struct {
 	Relays             []*schemas.RelayConfig                `json:"relays,omitempty"`
 	DatasheetOverrides []DatasheetOverrideFileConfig         `json:"datasheet_overrides,omitempty"`
 	ModelRouters       []configstore.ModelRouter             `json:"model_routers,omitempty"`
+	ModelRoutingRules  []ModelRoutingRuleConfig              `json:"model_routing_rules,omitempty"`
 	Governance         *configstore.GovernanceConfig         `json:"governance,omitempty"`
 	VectorStoreConfig  *vectorstore.Config                   `json:"vector_store,omitempty"`
 	ConfigStoreConfig  *configstore.Config                   `json:"config_store,omitempty"`
@@ -497,6 +498,8 @@ func (cd *ConfigData) sectionPresent(name string) bool {
 		return cd.DatasheetOverrides != nil
 	case "model_routers":
 		return cd.ModelRouters != nil
+	case "model_routing_rules":
+		return cd.ModelRoutingRules != nil
 	case "governance":
 		return cd.Governance != nil
 	case "plugins":
@@ -585,6 +588,7 @@ func (cd *ConfigData) UnmarshalJSON(data []byte) error {
 		Relays             []*schemas.RelayConfig                `json:"relays,omitempty"`
 		DatasheetOverrides []DatasheetOverrideFileConfig         `json:"datasheet_overrides,omitempty"`
 		ModelRouters       []configstore.ModelRouter             `json:"model_routers,omitempty"`
+		ModelRoutingRules  []ModelRoutingRuleConfig              `json:"model_routing_rules,omitempty"`
 		Governance         *configstore.GovernanceConfig         `json:"governance,omitempty"`
 		VectorStoreConfig  json.RawMessage                       `json:"vector_store,omitempty"`
 		ConfigStoreConfig  json.RawMessage                       `json:"config_store,omitempty"`
@@ -619,6 +623,7 @@ func (cd *ConfigData) UnmarshalJSON(data []byte) error {
 	cd.Relays = temp.Relays
 	cd.DatasheetOverrides = temp.DatasheetOverrides
 	cd.ModelRouters = temp.ModelRouters
+	cd.ModelRoutingRules = temp.ModelRoutingRules
 	cd.Governance = temp.Governance
 	cd.Plugins = temp.Plugins
 	cd.WebSocket = temp.WebSocket
@@ -1255,8 +1260,8 @@ func LoadConfig(ctx context.Context, configDirPath string) (*Config, error) {
 	loadRelaysConfig(ctx, config, &configData)
 	// 8. Governance config
 	loadGovernanceConfig(ctx, config, &configData)
-	// 8a. Model routers, including the default router's deprecated
-	// governance.complexity_analyzer_config spelling
+	// 8a. Model routers, and the deprecated governance.complexity_analyzer_config
+	// spelling of the router that answers complexity_tier
 	loadModelRoutersConfig(ctx, config, &configData)
 	// 8b. Agent Gateway registrations (after governance so file-declared virtual
 	// keys exist before agent grants referencing them are written)
@@ -4588,6 +4593,10 @@ func mergeGovernanceConfig(ctx context.Context, config *Config, configData *Conf
 	}
 }
 
+// ModelRoutingRuleConfig is one config.json model_routing_rules entry, in the
+// shape the rule is stored in.
+type ModelRoutingRuleConfig = configstoreTables.TableModelRoutingRule
+
 // fileModelRouters reads config.json's model router declarations: the
 // model_routers entries, or, when the file has no model_routers section, the
 // deprecated governance.complexity_analyzer_config key, which configures the
@@ -4648,22 +4657,51 @@ func fileModelRouter(entry configstore.ModelRouter) (router configstore.ModelRou
 	if !ok {
 		return configstore.ModelRouter{}, nil, false
 	}
+	if entry.Targets != nil {
+		if err := configstore.ValidateModelRouterTargets(entry.Targets); err != nil {
+			logger.Error("invalid targets for model router %q in config file: %v", entry.ID, err)
+			return configstore.ModelRouter{}, nil, false
+		}
+	}
 	return configstore.ModelRouter{
 		ID:                       entry.ID,
 		Name:                     entry.Name,
 		Description:              entry.Description,
 		AnswersComplexityTier:    entry.AnswersComplexityTier,
 		ComplexityAnalyzerConfig: *normalized,
+		Targets:                  entry.Targets,
 		ConfigHash:               configstore.GenerateModelRouterHash(entry),
 	}, asWritten, true
 }
 
-// loadModelRoutersConfig reconciles config.json's model routers with the
-// store, so model routers are configured apart from governance. The
-// deprecated governance.complexity_analyzer_config key is applied to the
-// router that answers complexity_tier by planComplexityAnalyzerConfigUpdate,
-// under the rules that key always had; model_routers entries are applied by
-// syncModelRoutersFromFile.
+// syncModelRouterTargetsFromFile applies a config.json router's targets when
+// the entry declares them and they should win: always in source-of-truth mode
+// when they differ from the stored ones, and otherwise only when the entry
+// changed since it was last applied. An entry without targets leaves the
+// stored ones alone.
+func syncModelRouterTargetsFromFile(ctx context.Context, config *Config, id string, declared []configstoreTables.TableModelRouterTarget, stored []configstoreTables.TableModelRouterTarget, entryChanged, sourceOfTruth bool) {
+	if declared == nil {
+		return
+	}
+	if !entryChanged && !sourceOfTruth {
+		return
+	}
+	if configstore.ModelRouterTargetsHash(declared) == configstore.ModelRouterTargetsHash(stored) {
+		return
+	}
+	if err := config.ConfigStore.SetModelRouterTargets(ctx, id, declared); err != nil {
+		logger.Error("failed to sync targets of model router %q from config file: %v", id, err)
+	}
+}
+
+// loadModelRoutersConfig reconciles config.json's model routers and model
+// routing rules with the store, so model routers are configured apart from
+// governance. The deprecated governance.complexity_analyzer_config key is
+// applied to the router that answers complexity_tier by
+// planComplexityAnalyzerConfigUpdate, under the rules that key always had;
+// model_routers entries are applied by syncModelRoutersFromFile. The config
+// complexity_tier then runs on is published to config.GovernanceConfig, where
+// the deprecated key put it.
 func loadModelRoutersConfig(ctx context.Context, config *Config, configData *ConfigData) {
 	if config == nil || configData == nil {
 		return
@@ -4678,7 +4716,142 @@ func loadModelRoutersConfig(ctx context.Context, config *Config, configData *Con
 		// the store did not keep.
 		config.GovernanceConfig.ComplexityAnalyzerConfig = next
 	}
-	syncModelRoutersFromFile(ctx, config, configData)
+	// Rules the file no longer declares go before the routers they may name,
+	// so pruning a router is not refused for a rule that is itself going. A
+	// router still named by a rule the file moves to another router is pruned
+	// once the rules have synced.
+	pruneModelRoutingRulesToFile(ctx, config, configData)
+	inUse := syncModelRoutersFromFile(ctx, config, configData)
+	syncModelRoutingRulesFromFile(ctx, config, configData)
+	for _, id := range inUse {
+		if err := config.ConfigStore.DeleteModelRouter(ctx, id); err != nil && !errors.Is(err, configstore.ErrNotFound) {
+			logger.Error("failed to delete model router %q absent from config file: %v", id, err)
+		}
+	}
+	if config.ConfigStore == nil || !configData.sectionPresent("model_routers") {
+		return
+	}
+	tierConfig, err := config.ConfigStore.GetComplexityAnalyzerConfig(ctx)
+	if err != nil {
+		logger.Warn("failed to read the complexity_tier model router after config file sync: %v", err)
+		return
+	}
+	publishComplexityTierConfig(config, tierConfig)
+}
+
+// pruneModelRoutingRulesToFile deletes the stored model routing rules a
+// source-of-truth config.json with a model_routing_rules section no longer
+// declares. Every declared id is kept, valid or not, so a typo in an entry
+// does not delete the rule it meant to configure.
+func pruneModelRoutingRulesToFile(ctx context.Context, config *Config, configData *ConfigData) {
+	if config == nil || config.ConfigStore == nil || configData == nil ||
+		!configData.isConfigJSONSourceOfTruth() || !configData.sectionPresent("model_routing_rules") {
+		return
+	}
+	stored, err := config.ConfigStore.GetModelRoutingRules(ctx)
+	if err != nil {
+		logger.Error("failed to read model routing rules for config file sync: %v", err)
+		return
+	}
+	keep := make(map[string]bool, len(configData.ModelRoutingRules))
+	for _, rule := range configData.ModelRoutingRules {
+		keep[strings.TrimSpace(rule.ID)] = true
+	}
+	for _, rule := range stored {
+		if keep[rule.ID] {
+			continue
+		}
+		if err := config.ConfigStore.DeleteModelRoutingRule(ctx, rule.ID); err != nil && !errors.Is(err, configstore.ErrNotFound) {
+			logger.Error("failed to delete model routing rule %q absent from config file: %v", rule.ID, err)
+		}
+	}
+}
+
+// modelRoutingScopeResolves reports whether a config.json model routing
+// rule's scope entity exists, once governance has synced. As with routing
+// rules, config.json cannot scope a rule to a user.
+func modelRoutingScopeResolves(ctx context.Context, store configstore.ConfigStore, rule *configstoreTables.TableModelRoutingRule) bool {
+	if rule.Scope == "" || rule.Scope == "global" {
+		return true
+	}
+	if rule.ScopeID == nil || strings.TrimSpace(*rule.ScopeID) == "" {
+		return false
+	}
+	var err error
+	switch rule.Scope {
+	case "virtual_key":
+		_, err = store.GetVirtualKey(ctx, *rule.ScopeID)
+	case "team":
+		_, err = store.GetTeam(ctx, *rule.ScopeID)
+	case "customer":
+		_, err = store.GetCustomer(ctx, *rule.ScopeID)
+	default:
+		return false
+	}
+	return err == nil
+}
+
+// syncModelRoutingRulesFromFile reconciles config.json's model routing rules
+// with the store. A rule is one unit, like a routing rule: one hash covers it
+// all, and a changed hash, or config.json as the source of truth, re-applies
+// the whole rule. A rule that fails validation, names an unknown router, or
+// scopes to an entity that does not exist is logged and skipped, leaving any
+// stored version in place. Rules are served from the store, so without one
+// there is nothing to apply them to.
+func syncModelRoutingRulesFromFile(ctx context.Context, config *Config, configData *ConfigData) {
+	if config == nil || configData == nil || !configData.sectionPresent("model_routing_rules") {
+		return
+	}
+	if config.ConfigStore == nil {
+		logger.Warn("model_routing_rules in config file need a config store; they are not applied")
+		return
+	}
+	sourceOfTruth := configData.isConfigJSONSourceOfTruth()
+	seen := make(map[string]bool, len(configData.ModelRoutingRules))
+	for _, entry := range configData.ModelRoutingRules {
+		rule := entry
+		rule.ID = strings.TrimSpace(rule.ID)
+		if rule.ID == "" {
+			logger.Error("skipping model_routing_rules entry %q: id is required", rule.Name)
+			continue
+		}
+		if seen[rule.ID] {
+			logger.Error("skipping model_routing_rules entry: id %q is declared more than once", rule.ID)
+			continue
+		}
+		seen[rule.ID] = true
+		if err := configstore.ValidateModelRoutingRule(&rule); err != nil {
+			logger.Error("invalid model_routing_rules entry %q in config file: %v", rule.ID, err)
+			continue
+		}
+		if err := rules.ValidateModelRuleCEL(rule.CelExpression); err != nil {
+			logger.Error("invalid model_routing_rules entry %q in config file: %v", rule.ID, err)
+			continue
+		}
+		if !modelRoutingScopeResolves(ctx, config.ConfigStore, &rule) {
+			logger.Warn("model routing rule %s: scope %s with scope_id %v does not resolve to an existing entity (use the entity's id, not its name; config.json cannot scope to a user); skipping it", rule.ID, rule.Scope, rule.ScopeID)
+			continue
+		}
+		hash, err := configstore.GenerateModelRoutingRuleHash(rule)
+		if err != nil {
+			logger.Error("failed to hash model routing rule %q: %v", rule.ID, err)
+			continue
+		}
+		rule.ConfigHash = hash
+		stored, err := config.ConfigStore.GetModelRoutingRule(ctx, rule.ID)
+		switch {
+		case errors.Is(err, configstore.ErrNotFound):
+			err = config.ConfigStore.CreateModelRoutingRule(ctx, &rule)
+		case err != nil:
+		case !sourceOfTruth && stored.ConfigHash == hash:
+			continue
+		default:
+			err = config.ConfigStore.UpdateModelRoutingRule(ctx, &rule)
+		}
+		if err != nil {
+			logger.Error("failed to sync model routing rule %q from config file: %v", rule.ID, err)
+		}
+	}
 }
 
 // syncModelRoutersFromFile reconciles config.json's model routers with the
@@ -4689,15 +4862,14 @@ func loadModelRoutersConfig(ctx context.Context, config *Config, configData *Con
 // deleted. In split mode only the sections whose hash changed are applied,
 // merged into what the store holds, so dashboard edits to the rest survive a
 // reboot, and a router new to the store is created from the file as written.
-// Name, description and the complexity_tier flag follow their own hash the
-// same way. Each router is written on its own, so one bad entry is logged and
-// skipped without holding back the others.
-//
-// The complexity_tier router's config is published to
-// config.GovernanceConfig afterwards, where the deprecated key put it.
-func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *ConfigData) {
+// Name, description, the complexity_tier flag and targets follow their own
+// hash the same way. Each router is written on its own, so one bad entry is
+// logged and skipped without holding back the others. It returns the
+// undeclared routers it could not delete because a stored model routing rule
+// still names them, for the caller to retry once the rules have synced.
+func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *ConfigData) []string {
 	if config == nil || configData == nil || !configData.sectionPresent("model_routers") {
-		return
+		return nil
 	}
 	_, entries := fileModelRouters(configData, false)
 	type declaredRouter struct {
@@ -4721,13 +4893,13 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 			}
 		}
 		config.ModelRouters = routers
-		return
+		return nil
 	}
 
 	stored, err := config.ConfigStore.GetModelRouters(ctx)
 	if err != nil {
 		logger.Error("failed to read model routers for config file sync: %v", err)
-		return
+		return nil
 	}
 	storedByID := make(map[string]configstore.ModelRouter, len(stored))
 	for _, router := range stored {
@@ -4737,6 +4909,7 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 
 	// Undeclared routers go first, so a declared router can take the name of
 	// one being removed, as routing rules are pruned before their inserts.
+	var inUse []string
 	if sourceOfTruth {
 		keep := map[string]bool{}
 		for _, entry := range configData.ModelRouters {
@@ -4748,7 +4921,12 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 			if keep[router.ID] {
 				continue
 			}
-			if err := config.ConfigStore.DeleteModelRouter(ctx, router.ID); err != nil && !errors.Is(err, configstore.ErrNotFound) {
+			var refused *configstore.ModelRouterInUseError
+			err := config.ConfigStore.DeleteModelRouter(ctx, router.ID)
+			switch {
+			case errors.As(err, &refused):
+				inUse = append(inUse, router.ID)
+			case err != nil && !errors.Is(err, configstore.ErrNotFound):
 				logger.Error("failed to delete model router %q absent from config file: %v", router.ID, err)
 			}
 		}
@@ -4757,6 +4935,7 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 	for _, d := range declared {
 		current, exists := storedByID[d.router.ID]
 		next := d.router
+		entryChanged := !exists || current.ConfigHash != d.router.ConfigHash
 		if exists && !sourceOfTruth {
 			identityChanged := current.ConfigHash != d.router.ConfigHash
 			configChanged := !current.ConfigHashes.Equal(d.router.ConfigHashes)
@@ -4778,9 +4957,12 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 			}
 		}
 		if exists {
-			// The fingerprint is runtime bookkeeping the file never carries.
+			// The fingerprint is runtime bookkeeping the file never carries, and
+			// targets are applied on their own below.
 			next.EmbeddingFingerprint = current.EmbeddingFingerprint
+			next.Targets = current.Targets
 			if reflect.DeepEqual(current, next) {
+				syncModelRouterTargetsFromFile(ctx, config, d.router.ID, d.router.Targets, current.Targets, entryChanged, sourceOfTruth)
 				continue
 			}
 			err = config.ConfigStore.UpdateModelRouter(ctx, &next)
@@ -4794,15 +4976,12 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 		}
 		if err != nil {
 			logger.Error("failed to sync model router %q from config file: %v", d.router.ID, err)
+			continue
 		}
+		syncModelRouterTargetsFromFile(ctx, config, d.router.ID, d.router.Targets, current.Targets, entryChanged, sourceOfTruth)
 	}
 
-	tierConfig, err := config.ConfigStore.GetComplexityAnalyzerConfig(ctx)
-	if err != nil {
-		logger.Warn("failed to read the complexity_tier model router after config file sync: %v", err)
-		return
-	}
-	publishComplexityTierConfig(config, tierConfig)
+	return inUse
 }
 
 // publishComplexityTierConfig records the config complexity_tier runs on where
@@ -7517,22 +7696,22 @@ func ResolveFrameworkPricingConfig(
 	}
 
 	return &configstoreTables.TableFrameworkConfig{
-		ID:                     configID,
-		PricingURL:             resolvedPricingURL,
-		PricingSyncInterval:    resolvedSyncSeconds,
-		ModelParametersURL:     resolvedModelParametersURL,
-		MCPLibraryURL:          resolvedMCPLibraryURL,
-		MCPLibrarySyncInterval: resolvedMCPLibrarySyncInterval,
-		LiveModelsSyncInterval: resolvedLiveModelsSyncInterval,
-		ConfigHash:             persistedHash,
-	}, &modelcatalog.Config{
-		PricingURL:             resolvedPricingURL,
-		PricingSyncInterval:    resolvedSyncSeconds,
-		ModelParametersURL:     resolvedModelParametersURL,
-		MCPLibraryURL:          resolvedMCPLibraryURL,
-		MCPLibrarySyncInterval: resolvedMCPLibrarySyncInterval,
-		LiveModelsSyncInterval: resolvedLiveModelsSyncInterval,
-	}, needsDBUpdate
+			ID:                     configID,
+			PricingURL:             resolvedPricingURL,
+			PricingSyncInterval:    resolvedSyncSeconds,
+			ModelParametersURL:     resolvedModelParametersURL,
+			MCPLibraryURL:          resolvedMCPLibraryURL,
+			MCPLibrarySyncInterval: resolvedMCPLibrarySyncInterval,
+			LiveModelsSyncInterval: resolvedLiveModelsSyncInterval,
+			ConfigHash:             persistedHash,
+		}, &modelcatalog.Config{
+			PricingURL:             resolvedPricingURL,
+			PricingSyncInterval:    resolvedSyncSeconds,
+			ModelParametersURL:     resolvedModelParametersURL,
+			MCPLibraryURL:          resolvedMCPLibraryURL,
+			MCPLibrarySyncInterval: resolvedMCPLibrarySyncInterval,
+			LiveModelsSyncInterval: resolvedLiveModelsSyncInterval,
+		}, needsDBUpdate
 }
 
 // initFrameworkConfig initializes framework config and pricing manager from file

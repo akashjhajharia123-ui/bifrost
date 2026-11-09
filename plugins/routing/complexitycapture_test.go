@@ -44,6 +44,12 @@ func captureTestConfig(suggestions *configstore.ComplexitySuggestionsConfig) *co
 	}
 }
 
+// answerComplexityTierAs makes the plugin's own classifiers serve the router
+// with the given id, the one phrase suggestions are made for.
+func answerComplexityTierAs(p *RoutingPlugin, id string) {
+	p.tierRouterID.Store(&id)
+}
+
 // newCapturePlugin builds a plugin with a ready semantic classifier and
 // capture wired, without the upkeep timer (tests drive it). Capture only
 // writes to Bifrost's configured vector store, never the classifier's
@@ -52,6 +58,7 @@ func newCapturePlugin(t *testing.T, suggestions *configstore.ComplexitySuggestio
 	t.Helper()
 	logger := bifrost.NewDefaultLogger(schemas.LogLevelError)
 	p := &RoutingPlugin{logger: logger, semanticClassifier: complexity.NewSemanticClassifier(context.Background(), logger)}
+	answerComplexityTierAs(p, complexity.DefaultRouterID)
 	p.semanticClassifier.SetEmbeddingFunc(captureTestEmbedding)
 	store, err := vectorstore.NewVectorStore(context.Background(), &vectorstore.Config{
 		Enabled: true, Type: vectorstore.VectorStoreTypeChromem, Config: vectorstore.ChromemConfig{},

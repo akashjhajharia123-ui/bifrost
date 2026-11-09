@@ -355,6 +355,7 @@ var logstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"relay_logs_add_correlation_columns"}, run: migrationAddRelayLogCorrelationColumns},
 	{IDs: []string{"mcp_tool_logs_add_round_trip_id_column"}, run: migrationAddRoundTripIDColumnToMCPToolLogs},
 	{IDs: []string{"logs_add_model_routing_suggestion_tables"}, run: migrationAddComplexitySuggestionTables},
+	{IDs: []string{"logs_add_model_routing_columns"}, run: migrationAddModelRoutingColumns},
 }
 
 // areThereAnyPendingMigrations returns true if there are any pending migrations to be applied.
@@ -3009,6 +3010,16 @@ var performanceIndexes = []performanceIndexDef{
 	},
 	{
 		table: "logs",
+		name:  "idx_logs_model_router_id",
+		sql:   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_model_router_id ON logs(model_router_id) WHERE model_router_id IS NOT NULL",
+	},
+	{
+		table: "logs",
+		name:  "idx_logs_model_routing_rule_id",
+		sql:   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_model_routing_rule_id ON logs(model_routing_rule_id) WHERE model_routing_rule_id IS NOT NULL",
+	},
+	{
+		table: "logs",
 		name:  "idx_logs_session_id",
 		sql:   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_session_id ON logs(session_id) WHERE session_id IS NOT NULL",
 	},
@@ -4518,6 +4529,60 @@ func migrationAddComplexityRoutingColumns(ctx context.Context, db *gorm.DB, logg
 		return fmt.Errorf("error while adding complexity routing columns: %w", err)
 	}
 	return nil
+}
+
+// migrationAddModelRoutingColumns adds model_router_id, model_router_name,
+// model_routing_rule_id and model_routing_rule_name to the logs table. They
+// record which model router's tier routed a request and which model routing
+// rule chose it; all four stay NULL for requests no router classified.
+func migrationAddModelRoutingColumns(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "logs_add_model_routing_columns"
+	logger.Info("[logstore] starting migration %s", migrationName)
+	defer logger.Info("[logstore] finished migration %s", migrationName)
+	opts := *migrator.DefaultOptions
+	opts.UseTransaction = true
+	m := migrator.New(db, &opts, []*migrator.Migration{modelRoutingColumnsMigration(ctx, logger)})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error while adding model routing columns: %w", err)
+	}
+	return nil
+}
+
+// modelRoutingColumns are the logs columns that record the model router and
+// model routing rule a request was routed by.
+var modelRoutingColumns = []string{"model_router_id", "model_router_name", "model_routing_rule_id", "model_routing_rule_name"}
+
+func modelRoutingColumnsMigration(ctx context.Context, logger schemas.Logger) *migrator.Migration {
+	const migrationName = "logs_add_model_routing_columns"
+	return &migrator.Migration{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := boundDDLLockWait(tx); err != nil {
+				return err
+			}
+			for _, column := range modelRoutingColumns {
+				if err := addColumnIfNotExists(tx, logger, &Log{}, column); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			// The router and rule a request was routed by cannot be recaptured,
+			// so a rollback is refused while any log records them.
+			if err := refuseRollbackWhileRecorded(tx, migrationName, []any{&Log{}}, modelRoutingColumns...); err != nil {
+				return err
+			}
+			for _, column := range modelRoutingColumns {
+				if err := dropColumnIfExists(tx, logger, &Log{}, column); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
 }
 
 // migrationAddSessionIDColumn adds the generic session identity resolved at

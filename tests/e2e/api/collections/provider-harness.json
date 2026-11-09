@@ -317922,6 +317922,173 @@
           }
         }
       ]
+    },
+    {
+      "name": "339. Model routers: each tier's model lives on the router, a rule calls it by model name, and the llm classifier decides the tier (model router targets)",
+      "description": "A model router owns the model each tier gets; model routing rules only decide which requests a router classifies. An app that wants a router asks for it by a model name that a rule matches with `model == \"<name>\"`, and the router's model for the tier the classifier picks replaces that name.\n\nThe prerequest creates a temporary router whose classifier is the llm classifier on openai/gpt-4o-mini, sets every tier's model to openai/gpt-4o-mini through PUT /api/routing/model-routers/{id}/targets, and creates a global rule matching a unique model name. The request asks for that name on /v1/chat/completions. The test pins that the router's tier model served it whatever tier was chosen, that a new router's defaults are served by GET /api/routing/model-routers/defaults, that /api/logs/rankings/by-dimension accepts dimension=model_router, that the router list holds only stored routers with at most one answering complexity_tier and the new router not among them, and the refusals for bad targets and for the llm classifier without an llm block. It deletes the rule and the router on every path. It makes one paid openai/gpt-4o-mini classification call and one paid completion.",
+      "item": [
+        {
+          "name": "openai/gpt-4o-mini llm-classified router serves a request that asks for it by model name via POST /v1/chat/completions - model router targets",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// ---- in-script management calls (see the folder description) ----",
+                  "var BASE = pm.variables.get('baseUrl');",
+                  "function call(method, path, body, cb) {",
+                  "  var req = { url: BASE + path, method: method, header: { 'Content-Type': 'application/json' } };",
+                  "  if (body !== null && body !== undefined) { req.body = { mode: 'raw', raw: typeof body === 'string' ? body : JSON.stringify(body) }; }",
+                  "  pm.sendRequest(req, function (err, res) {",
+                  "    if (err) { pm.test(method + ' ' + path + ' reached the gateway', function () { pm.expect.fail(String(err)); }); return cb(null, null); }",
+                  "    var json = null; try { json = res.json(); } catch (e) { json = null; }",
+                  "    cb(res, json);",
+                  "  });",
+                  "}",
+                  "// A temporary llm-classified router whose every tier goes to openai/gpt-4o-mini, and a rule that",
+                  "// sends the model name this request asks for to it. The test script deletes both on every path.",
+                  "var stamp = String(Date.now());",
+                  "var NAME = 'harness-router-' + stamp;",
+                  "pm.collectionVariables.set('modelRouterTargetsName', NAME);",
+                  "pm.collectionVariables.set('modelRouterTargetsRouterId', 'harness-router-not-created');",
+                  "pm.collectionVariables.set('modelRouterTargetsRuleId', 'harness-rule-not-created');",
+                  "var router = {",
+                  "  name: 'Harness targets ' + stamp,",
+                  "  classifier: 'llm',",
+                  "  llm: { provider: 'openai', model: 'gpt-4o-mini', timeout: '10s' },",
+                  "  keywords: { simple_keywords: ['a greeting or a one-word fact'], medium_keywords: ['write or fix one function'], complex_keywords: ['design a distributed system with tradeoffs'] }",
+                  "};",
+                  "var everyTier = ['SIMPLE', 'MEDIUM', 'COMPLEX'].map(function (tier) { return { tier: tier, provider: 'openai', model: 'gpt-4o-mini', weight: 1 }; });",
+                  "call('POST', '/api/routing/model-routers', router, function (res, json) {",
+                  "  pm.test('setup: the temporary llm router is created', function () { pm.expect(res && res.code, 'unexpected status: ' + (res ? res.text() : 'no response')).to.eql(200); });",
+                  "  if (!(res && res.code === 200 && json && json.id)) { return; }",
+                  "  pm.collectionVariables.set('modelRouterTargetsRouterId', json.id);",
+                  "  pm.test('setup: the router is served with the llm classifier', function () { pm.expect(json.classifier, JSON.stringify(json)).to.eql('llm'); });",
+                  "  pm.test('setup: a router created without answers_complexity_tier does not answer complexity_tier', function () { pm.expect(json.answers_complexity_tier, JSON.stringify(json)).to.not.eql(true); });",
+                  "  call('PUT', '/api/routing/model-routers/' + json.id + '/targets', { targets: everyTier }, function (tres, tjson) {",
+                  "    pm.test('setup: the router owns a model for every tier', function () {",
+                  "      pm.expect(tres && tres.code, 'unexpected status: ' + (tres ? tres.text() : 'no response')).to.eql(200);",
+                  "      pm.expect(tjson && tjson.targets, tres ? tres.text() : '').to.be.an('array').with.lengthOf(3);",
+                  "    });",
+                  "    var rule = { name: 'Harness by name ' + stamp, model_router_id: json.id, cel_expression: 'model == \"' + NAME + '\"', scope: 'global', priority: 100000 + (Number(stamp) % 800000) };",
+                  "    call('POST', '/api/routing/model-routing-rules', rule, function (rres, rjson) {",
+                  "      pm.test('setup: a rule sends the model name to the router, with no targets of its own', function () {",
+                  "        pm.expect(rres && rres.code, 'unexpected status: ' + (rres ? rres.text() : 'no response')).to.eql(200);",
+                  "        pm.expect(rjson && rjson.targets, rres ? rres.text() : '').to.be.undefined;",
+                  "      });",
+                  "      if (rres && rres.code === 200 && rjson && rjson.id) { pm.collectionVariables.set('modelRouterTargetsRuleId', rjson.id); }",
+                  "    });",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// ---- in-script management calls (see the folder description) ----",
+                  "var BASE = pm.variables.get('baseUrl');",
+                  "function call(method, path, body, cb) {",
+                  "  var req = { url: BASE + path, method: method, header: { 'Content-Type': 'application/json' } };",
+                  "  if (body !== null && body !== undefined) { req.body = { mode: 'raw', raw: typeof body === 'string' ? body : JSON.stringify(body) }; }",
+                  "  pm.sendRequest(req, function (err, res) {",
+                  "    if (err) { pm.test(method + ' ' + path + ' reached the gateway', function () { pm.expect.fail(String(err)); }); return cb(null, null); }",
+                  "    var json = null; try { json = res.json(); } catch (e) { json = null; }",
+                  "    cb(res, json);",
+                  "  });",
+                  "}",
+                  "var ROUTER = pm.collectionVariables.get('modelRouterTargetsRouterId');",
+                  "var RULE = pm.collectionVariables.get('modelRouterTargetsRuleId');",
+                  "var body = null; try { body = pm.response.json(); } catch (e) { body = null; }",
+                  "pm.test('asking for the router by name answers 200', function () {",
+                  "  pm.expect(pm.response.code, 'chat failed: ' + pm.response.text()).to.eql(200);",
+                  "});",
+                  "pm.test('the router\\'s tier model served the request, not the name the app sent', function () {",
+                  "  pm.expect(body && body.model, pm.response.text()).to.be.a('string').and.include('gpt-4o-mini');",
+                  "  pm.expect(body && body.extra_fields && body.extra_fields.provider, pm.response.text()).to.eql('openai');",
+                  "});",
+                  "var probes = [",
+                  "  { label: 'weights that do not sum to 1 are 400', method: 'PUT', path: '/api/routing/model-routers/' + ROUTER + '/targets', body: { targets: [{ tier: 'SIMPLE', model: 'gpt-4o-mini', weight: 0.5 }] }, status: 400 },",
+                  "  { label: 'a target that sets neither provider nor model is 400', method: 'PUT', path: '/api/routing/model-routers/' + ROUTER + '/targets', body: { targets: [{ tier: 'SIMPLE', weight: 1 }] }, status: 400 },",
+                  "  { label: 'targets for an unknown router are 404', method: 'PUT', path: '/api/routing/model-routers/harness-no-such-router/targets', body: { targets: [] }, status: 404 },",
+                  "  { label: 'the llm classifier without an llm block is 400', method: 'POST', path: '/api/routing/model-routers', body: { name: 'Harness no llm ' + Date.now(), classifier: 'llm', keywords: { simple_keywords: ['a'], medium_keywords: ['b'], complex_keywords: ['c'] } }, status: 400 }",
+                  "];",
+                  "function cleanup() {",
+                  "  var steps = [];",
+                  "  if (RULE !== 'harness-rule-not-created') { steps.push(['DELETE', '/api/routing/model-routing-rules/' + RULE, 'the temporary rule is deleted']); }",
+                  "  if (ROUTER !== 'harness-router-not-created') { steps.push(['DELETE', '/api/routing/model-routers/' + ROUTER, 'the temporary router is deleted']); }",
+                  "  (function step(i) {",
+                  "    if (i >= steps.length) { return; }",
+                  "    call(steps[i][0], steps[i][1], null, function (res) {",
+                  "      pm.test('cleanup: ' + steps[i][2], function () { pm.expect(res && res.code, 'unexpected status: ' + (res ? res.text() : 'no response')).to.eql(200); });",
+                  "      step(i + 1);",
+                  "    });",
+                  "  })(0);",
+                  "}",
+                  "call('GET', '/api/routing/model-routers/defaults', null, function (res, json) {",
+                  "  pm.test('defaults: a new router starts from the built-in phrases and guidance', function () {",
+                  "    pm.expect(res && res.code, 'unexpected status: ' + (res ? res.text() : 'no response')).to.eql(200);",
+                  "    pm.expect(json && json.config && json.config.keywords && json.config.keywords.simple_keywords, res ? res.text() : '').to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(json && json.llm_default_prompt, res ? res.text() : '').to.be.a('string').and.not.empty;",
+                  "  });",
+                  "  call('GET', '/api/logs/rankings/by-dimension?dimension=model_router&all=true', null, function (rres, rjson) {",
+                  "    pm.test('rankings: requests can be ranked by model router', function () {",
+                  "      pm.expect(rres && rres.code, 'unexpected status: ' + (rres ? rres.text() : 'no response')).to.eql(200);",
+                  "      pm.expect(rjson && rjson.rankings, rres ? rres.text() : '').to.be.an('array');",
+                  "    });",
+                  "    call('GET', '/api/routing/model-routers', null, function (lres, ljson) {",
+                  "      pm.test('list: only stored routers are listed, at most one answering complexity_tier', function () {",
+                  "        pm.expect(lres && lres.code, 'unexpected status: ' + (lres ? lres.text() : 'no response')).to.eql(200);",
+                  "        var routers = (ljson && ljson.routers) || null;",
+                  "        pm.expect(routers, lres ? lres.text() : '').to.be.an('array');",
+                  "        pm.expect(routers.filter(function (r) { return r.answers_complexity_tier === true; }).length, lres.text()).to.be.at.most(1);",
+                  "        var mine = routers.filter(function (r) { return r.id === ROUTER; });",
+                  "        if (ROUTER !== 'harness-router-not-created') { pm.expect(mine, lres.text()).to.have.lengthOf(1); pm.expect(mine[0].answers_complexity_tier, lres.text()).to.not.eql(true); }",
+                  "      });",
+                  "      (function next(i) {",
+                  "        if (i >= probes.length) { return cleanup(); }",
+                  "        var p = probes[i];",
+                  "        call(p.method, p.path, p.body, function (res) {",
+                  "          pm.test('refusal: ' + p.label, function () { pm.expect(res && res.code, 'unexpected status: ' + (res ? res.text() : 'no response')).to.eql(p.status); });",
+                  "          next(i + 1);",
+                  "        });",
+                  "      })(0);",
+                  "    });",
+                  "  });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{modelRouterTargetsName}}\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Say hello in one short sentence.\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

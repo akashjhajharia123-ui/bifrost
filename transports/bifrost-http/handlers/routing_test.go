@@ -20,12 +20,13 @@ import (
 
 type mockRoutingManager struct {
 	RoutingManager
-	reloadedConfig *complexity.AnalyzerConfig
-	reloadCalls    int
-	reloadErr      error
-	retryStatus    complexity.SemanticStatusInfo
-	retryStarted   bool
-	retryErr       error
+	reloadedConfig   *complexity.AnalyzerConfig
+	reloadedRouterID string
+	reloadCalls      int
+	reloadErr        error
+	retryStatus      complexity.SemanticStatusInfo
+	retryStarted     bool
+	retryErr         error
 }
 
 func (m *mockRoutingManager) ValidateComplexityAnalyzerConfig(_ context.Context, _ *complexity.AnalyzerConfig) error {
@@ -48,6 +49,14 @@ func (m *mockRoutingManager) GetComplexityLLMStatus(_ context.Context) (complexi
 func (m *mockRoutingManager) ReloadComplexityAnalyzerConfig(_ context.Context, config *complexity.AnalyzerConfig) error {
 	m.reloadCalls++
 	m.reloadedConfig = config
+	return m.reloadErr
+}
+
+// ReloadModelRouter records which router a legacy complexity config save
+// reloads.
+func (m *mockRoutingManager) ReloadModelRouter(_ context.Context, id string) error {
+	m.reloadCalls++
+	m.reloadedRouterID = id
 	return m.reloadErr
 }
 
@@ -214,8 +223,8 @@ func TestComplexityAnalyzerConfigPutPersistsAndReloads(t *testing.T) {
 	if manager.reloadCalls != 1 {
 		t.Fatalf("expected one reload, got %d", manager.reloadCalls)
 	}
-	if manager.reloadedConfig == nil || manager.reloadedConfig.TierBoundaries.MediumComplex != 0.34 {
-		t.Fatalf("expected reload with normalized config, got %+v", manager.reloadedConfig)
+	if manager.reloadedRouterID != configstore.LegacyComplexityRouterID {
+		t.Fatalf("expected a reload of the router the save created, got %q", manager.reloadedRouterID)
 	}
 
 	stored, err := store.GetComplexityAnalyzerConfig(context.Background())
@@ -394,12 +403,12 @@ func TestComplexityAnalyzerConfigResetPersistsDefaultsAndReloads(t *testing.T) {
 		t.Fatalf("expected the llm budget attribution flag to survive reset, got %+v", stored.LLM)
 	}
 
-	// The reload and the response body carry the same record: the plugin
-	// reconfigures from one and the configuration UI reseeds its form from the
-	// other, so an embedding block missing from either reads as "unconfigured"
+	// The plugin reloads the router the reset wrote, from the store checked
+	// above, and the configuration UI reseeds its form from the response
+	// body, so an embedding block missing from either reads as "unconfigured"
 	// until the next restart or refetch.
-	if manager.reloadedConfig == nil || manager.reloadedConfig.Semantic == nil || manager.reloadedConfig.LLM == nil {
-		t.Fatalf("expected reload with the embedding and llm config retained, got %+v", manager.reloadedConfig)
+	if manager.reloadedRouterID != configstore.LegacyComplexityRouterID {
+		t.Fatalf("expected a reload of the router the reset wrote, got %q", manager.reloadedRouterID)
 	}
 	var resp complexity.AnalyzerConfig
 	if err := json.Unmarshal(ctx.Response.Body(), &resp); err != nil {

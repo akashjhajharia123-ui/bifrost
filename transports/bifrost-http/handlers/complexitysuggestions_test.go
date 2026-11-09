@@ -35,7 +35,7 @@ type suggestionManagerFake struct {
 	pluginMissing bool
 	testCalls     int
 	// windows records the window of each run started; version is what the
-	// default router serves.
+	// complexity_tier router serves.
 	windows []time.Duration
 	version string
 }

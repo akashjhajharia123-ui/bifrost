@@ -24,7 +24,7 @@ type TableModelRouter struct {
 	Name                  string `gorm:"type:varchar(255);not null;uniqueIndex:idx_model_router_name" json:"name"`
 	Description           string `gorm:"type:text" json:"description"`
 	AnswersComplexityTier bool   `gorm:"column:answers_complexity_tier;not null;index" json:"answers_complexity_tier"` // routing rules read complexity_tier from it; at most one row
-	// Classifier is "semantic" or "decision". Empty only on the placeholder row
+	// Classifier is "semantic", "decision" or "llm". Empty only on the placeholder row
 	// a first save inserts to have something to lock; it never commits.
 	Classifier string `gorm:"type:varchar(20);not null" json:"classifier"`
 

@@ -191,9 +191,10 @@ type complexitySuggestionJobMeta struct {
 }
 
 // suggestionRouter is one router suggestions are made for: its settings and
-// the classifier serving its phrase bank. A gateway has one today, the
-// default router, built from the plugin's own config and classifier; several
-// routers add entries here and nothing else in this file changes.
+// the classifier serving its phrase bank. A gateway has at most one today,
+// the router that answers complexity_tier, built from the plugin's own config
+// and classifier; several routers add entries here and nothing else in this
+// file changes.
 type suggestionRouter struct {
 	id         string
 	config     *complexity.AnalyzerConfig
@@ -207,9 +208,15 @@ var ErrUnknownComplexityRouter = errors.New("no such model router")
 // ErrComplexitySuggestionWindow is a run window outside what is kept.
 var ErrComplexitySuggestionWindow = errors.New("the run window must be at least one second and no longer than the suggestions lookback")
 
-// suggestionRouters lists the routers suggestions are made for.
+// suggestionRouters lists the routers suggestions are made for: the one that
+// answers complexity_tier, whose traffic request capture samples. With none,
+// there is no router to suggest phrases for.
 func (p *RoutingPlugin) suggestionRouters() []suggestionRouter {
-	return []suggestionRouter{{id: complexity.DefaultRouterID, config: p.complexityConfig.Load(), classifier: p.semanticClassifier}}
+	id := p.complexityTierRouterID()
+	if id == "" {
+		return nil
+	}
+	return []suggestionRouter{{id: id, config: p.complexityConfig.Load(), classifier: p.semanticClassifier}}
 }
 
 // suggestionRouter finds one router by ID.

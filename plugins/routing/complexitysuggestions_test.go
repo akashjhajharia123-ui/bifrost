@@ -594,6 +594,7 @@ func TestComplexitySuggestionsRunNowNeedsAServingBank(t *testing.T) {
 	ctx := context.Background()
 	logger := bifrost.NewDefaultLogger(schemas.LogLevelError)
 	p := &RoutingPlugin{logger: logger, semanticClassifier: complexity.NewSemanticClassifier(ctx, logger)}
+	answerComplexityTierAs(p, complexity.DefaultRouterID)
 	p.semanticClassifier.SetEmbeddingFunc(func(context.Context, *complexity.SemanticConfig, string) ([]float32, error) {
 		return nil, errors.New("embedding provider down")
 	})

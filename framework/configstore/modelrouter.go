@@ -44,8 +44,12 @@ type ModelRouter struct {
 	Description           string `json:"description,omitempty"`
 	AnswersComplexityTier bool   `json:"answers_complexity_tier,omitempty"` // routing rules read complexity_tier from it; at most one router
 	ComplexityAnalyzerConfig
-	// ConfigHash is the hash of the config.json entry's name and description
-	// last applied. The config sections carry their own hashes in
+	// Targets are the model each tier gets, read with the router. Create and
+	// update leave them alone; SetModelRouterTargets writes them. A config.json
+	// entry that omits them leaves the stored targets as they are.
+	Targets []tables.TableModelRouterTarget `json:"targets,omitempty"`
+	// ConfigHash is the hash of the config.json entry's name, description and
+	// targets last applied. The config sections carry their own hashes in
 	// ConfigHashes, so UI edits to sections the file did not change survive a
 	// reboot.
 	ConfigHash string `json:"-"`
@@ -91,14 +95,18 @@ func validateModelRouterIdentity(r *ModelRouter) error {
 }
 
 // GenerateModelRouterHash hashes the fields of a config.json router entry that
-// the per-section config hashes do not cover: its name, its description and
-// whether it answers complexity_tier.
+// the per-section config hashes do not cover: its name, its description,
+// whether it answers complexity_tier and, when the entry declares them, its
+// targets.
 func GenerateModelRouterHash(r ModelRouter) string {
 	hash := sha256.New()
 	writeHashField(hash, "name", strings.TrimSpace(r.Name))
 	writeHashField(hash, "description", strings.TrimSpace(r.Description))
 	if r.AnswersComplexityTier {
 		writeHashField(hash, "answers_complexity_tier", "true")
+	}
+	if r.Targets != nil {
+		writeModelRouterTargetsHash(hash, r.Targets)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
@@ -369,6 +377,10 @@ func (s *RDBConfigStore) GetModelRouters(ctx context.Context) ([]ModelRouter, er
 	if err := s.DB().WithContext(ctx).Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	targets, err := loadModelRouterTargets(ctx, s.DB())
+	if err != nil {
+		return nil, err
+	}
 	routers := make([]ModelRouter, 0, len(rows))
 	for i := range rows {
 		if isModelRouterPlaceholder(&rows[i]) {
@@ -381,6 +393,7 @@ func (s *RDBConfigStore) GetModelRouters(ctx context.Context) ([]ModelRouter, er
 			}
 			continue
 		}
+		router.Targets = targets[router.ID]
 		routers = append(routers, *router)
 	}
 	return routers, nil
@@ -411,7 +424,16 @@ func (s *RDBConfigStore) getModelRouterWithDB(ctx context.Context, db *gorm.DB, 
 	if isModelRouterPlaceholder(&row) {
 		return nil, nil
 	}
-	return decodeModelRouterRow(&row)
+	router, err := decodeModelRouterRow(&row)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := loadModelRouterTargets(ctx, db, id)
+	if err != nil {
+		return nil, err
+	}
+	router.Targets = targets[id]
+	return router, nil
 }
 
 // CreateModelRouter stores a new router. A taken id or name is
@@ -499,18 +521,35 @@ func (s *RDBConfigStore) UpdateModelRouter(ctx context.Context, router *ModelRou
 	})
 }
 
-// DeleteModelRouter removes a router. Deleting the router that answers
-// complexity_tier leaves complexity_tier on the built-in defaults.
+// DeleteModelRouter removes a router and its targets. A router model routing
+// rules still name cannot be deleted: that is a *ModelRouterInUseError listing
+// them. The router's row is locked before the
+// check, as a rule save locks it too, so a rule saved concurrently either
+// commits first and is counted, or finds the router gone. Deleting the router
+// that answers complexity_tier leaves complexity_tier on the built-in
+// defaults.
 func (s *RDBConfigStore) DeleteModelRouter(ctx context.Context, id string, tx ...*gorm.DB) error {
 	id = strings.TrimSpace(id)
-	result := s.modelRouterDB(tx).WithContext(ctx).Delete(&tables.TableModelRouter{}, "id = ?", id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.inModelRouterTx(ctx, tx, func(txDB *gorm.DB) error {
+		row, err := s.lockModelRouterRow(ctx, txDB, id)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return ErrNotFound
+		}
+		names, err := modelRoutingRulesUsingRouter(ctx, txDB, id)
+		if err != nil {
+			return err
+		}
+		if len(names) > 0 {
+			return &ModelRouterInUseError{RouterID: id, RuleNames: names}
+		}
+		if err := txDB.WithContext(ctx).Where("router_id = ?", id).Delete(&tables.TableModelRouterTarget{}).Error; err != nil {
+			return err
+		}
+		return txDB.WithContext(ctx).Delete(&tables.TableModelRouter{}, "id = ?", id).Error
+	})
 }
 
 // ResetModelRouter restores a router's tier boundaries and phrase lists from

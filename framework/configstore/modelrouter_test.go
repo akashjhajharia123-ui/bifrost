@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// testModelRouter returns a valid non-default router with a semantic block.
+// testModelRouter returns a valid router with a semantic block.
 func testModelRouter(id, name string) *ModelRouter {
 	return &ModelRouter{
 		ID:                       id,
@@ -82,11 +82,18 @@ func fillEveryField(t *testing.T, v reflect.Value, path string, seq *int) {
 
 // TestModelRouterTableRoundTripCoversEveryField pins that every field of a
 // router, its config included, has a column. A field added to the config
-// without one fails here instead of being silently dropped on save.
+// without one fails here instead of being silently dropped on save. Targets
+// are the exception: they have a table of their own, which
+// TestModelRouterTargetsStore covers.
 func TestModelRouterTableRoundTripCoversEveryField(t *testing.T) {
 	var router ModelRouter
 	seq := 0
-	fillEveryField(t, reflect.ValueOf(&router).Elem(), "ModelRouter", &seq)
+	v := reflect.ValueOf(&router).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		if name := v.Type().Field(i).Name; name != "Targets" {
+			fillEveryField(t, v.Field(i), "ModelRouter."+name, &seq)
+		}
+	}
 
 	row, err := modelRouterToTable(&router)
 	require.NoError(t, err)
@@ -602,7 +609,12 @@ func pinSingleConnection(t *testing.T, db *gorm.DB) {
 }
 
 // migrationTestStore wraps a migration test database in a store for reads.
+// Router reads carry the routers' targets, whose table a later migration
+// creates, so it is created here.
 func migrationTestStore(db *gorm.DB) *RDBConfigStore {
+	if err := db.AutoMigrate(&tables.TableModelRouterTarget{}); err != nil {
+		panic(err)
+	}
 	s := &RDBConfigStore{}
 	s.db.Store(db)
 	return s

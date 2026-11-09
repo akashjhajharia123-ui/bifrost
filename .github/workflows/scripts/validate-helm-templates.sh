@@ -1049,6 +1049,83 @@ expect_render_failure "relays: schema rejects a relay grant without relay_name" 
   --set 'bifrost.governance.virtualKeys[0].id=vk' --set 'bifrost.governance.virtualKeys[0].name=vk' \
   --set-json 'bifrost.governance.virtualKeys[0].relay_grants=[{"name":"tavily"}]'
 
+# Model routers and model routing rules render as top-level sections exactly as declared, and
+# render nothing when unset or empty, so existing installs keep their stored routers and rules.
+cat > "$VALUES_DIR/model-router-values.yaml" << 'VALS'
+bifrost:
+  modelRouters:
+    - id: general
+      name: General
+      answers_complexity_tier: true
+      semantic: { provider: openai, embedding_model: text-embedding-3-small }
+      session: { enabled: true }
+      suggestions: { enabled: true, sample_rate: 0.2, provider: openai, model: gpt-4o-mini, schedule: { every: 1w, start_at: "2026-11-12T04:00:00Z" } }
+      keywords: { simple_keywords: ["what is a mutex?"], medium_keywords: ["add api-key auth."], complex_keywords: ["design a migration."] }
+    - id: support
+      name: Support
+      description: Classifies support traffic
+      classifier: decision
+      decision: { provider: typesafe, model: jev-latest }
+      keywords: { simple_keywords: ["reset my password"], medium_keywords: ["invoice question"], complex_keywords: ["SSO migration"] }
+      targets:
+        - { tier: SIMPLE, provider: openai, model: gpt-4o-mini, weight: 1 }
+        - { tier: COMPLEX, provider: anthropic, model: claude-sonnet-4-5, key_id: k-1, weight: 1, ttft_timeout_ms: 5000, fallbacks: ["openai/gpt-4o", { provider: azure, model: gpt-4o, provider_key_name: azure-eu }] }
+    - id: assistant
+      name: Assistant
+      classifier: llm
+      llm: { provider: openai, model: gpt-4o-mini }
+      keywords: { simple_keywords: ["s"], medium_keywords: ["m"], complex_keywords: ["c"] }
+  modelRoutingRules:
+    - id: support-team
+      name: Support team
+      enabled: true
+      model_router_id: support
+      scope: team
+      scope_id: team-1
+      priority: 2
+    - id: support-by-name
+      name: Support assistant by name
+      cel_expression: "model == 'support-assistant'"
+      model_router_id: support
+VALS
+check_config "model routers: model_routers and model_routing_rules render as declared" \
+  'routers = cfg["model_routers"]
+assert [r["id"] for r in routers] == ["general", "support", "assistant"], "model_routers changed: %r" % routers
+assert routers[0]["answers_complexity_tier"] is True and "answers_complexity_tier" not in routers[1], "complexity_tier flag changed: %r" % routers
+assert routers[0]["semantic"] == {"provider": "openai", "embedding_model": "text-embedding-3-small"}, "semantic changed: %r" % routers[0]
+assert routers[0]["suggestions"]["schedule"] == {"every": "1w", "start_at": "2026-11-12T04:00:00Z"}, "suggestions changed: %r" % routers[0]
+assert routers[1]["description"] == "Classifies support traffic" and routers[1]["classifier"] == "decision", "router fields dropped: %r" % routers[1]
+assert routers[1]["targets"][1] == {"tier": "COMPLEX", "provider": "anthropic", "model": "claude-sonnet-4-5", "key_id": "k-1", "weight": 1, "ttft_timeout_ms": 5000, "fallbacks": ["openai/gpt-4o", {"provider": "azure", "model": "gpt-4o", "provider_key_name": "azure-eu"}]}, "target changed: %r" % routers[1]["targets"][1]
+assert routers[2]["classifier"] == "llm" and routers[2]["llm"] == {"provider": "openai", "model": "gpt-4o-mini"}, "llm router changed: %r" % routers[2]
+rules = cfg["model_routing_rules"]
+assert (rules[0]["model_router_id"], rules[0]["scope"], rules[0]["scope_id"], rules[0]["priority"]) == ("support", "team", "team-1", 2), "rule changed: %r" % rules[0]
+assert rules[1]["model_router_id"] == "support" and "support-assistant" in rules[1]["cel_expression"], "rule condition changed: %r" % rules[1]
+assert "complexity_analyzer_config" not in cfg.get("governance", {}), "model routers must not render the legacy key"' \
+  -f "$VALUES_DIR/model-router-values.yaml"
+check_config "model routers: omitted by default, leaving stored routers and rules alone" \
+  'assert "model_routers" not in cfg and "model_routing_rules" not in cfg, "rendered without being configured: %r" % {k: cfg.get(k) for k in ("model_routers", "model_routing_rules")}'
+check_config "model routers: empty lists render nothing" \
+  'assert "model_routers" not in cfg and "model_routing_rules" not in cfg, "empty lists rendered: %r" % {k: cfg.get(k) for k in ("model_routers", "model_routing_rules")}' \
+  --set-json 'bifrost.modelRouters=[]' --set-json 'bifrost.modelRoutingRules=[]'
+expect_render_failure "model routers: schema requires keywords" "keywords" \
+  --set-json 'bifrost.modelRouters=[{"id":"support","name":"Support"}]'
+expect_render_failure "model routers: schema rejects an unknown router field" "additional properties" \
+  --set-json 'bifrost.modelRouters=[{"id":"support","name":"Support","keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]},"modelRouterId":"x"}]'
+expect_render_failure "model routers: schema rejects an unknown tier" "tier" \
+  --set-json 'bifrost.modelRouters=[{"id":"support","name":"Support","keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]},"targets":[{"tier":"HARD","model":"m","weight":1}]}]'
+expect_render_failure "model routers: schema rejects a target that sets neither provider nor model" "provider" \
+  --set-json 'bifrost.modelRouters=[{"id":"support","name":"Support","keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]},"targets":[{"tier":"SIMPLE","weight":1}]}]'
+expect_render_failure "model routers: schema requires an llm block for the llm classifier" "llm" \
+  --set-json 'bifrost.modelRouters=[{"id":"support","name":"Support","classifier":"llm","keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]}}]'
+expect_render_failure "model routing rules: schema requires model_router_id" "model_router_id" \
+  --set-json 'bifrost.modelRoutingRules=[{"id":"r","name":"R"}]'
+expect_render_failure "model routing rules: schema rejects targets on a rule" "additional properties" \
+  --set-json 'bifrost.modelRoutingRules=[{"id":"r","name":"R","model_router_id":"support","targets":[{"tier":"SIMPLE","model":"m","weight":1}]}]'
+# The complexity_tier router's suggestion settings pass the schema and render under the legacy key.
+check_config "complexity analyzer: suggestions render under governance.complexity_analyzer_config" \
+  'assert cfg["governance"]["complexity_analyzer_config"]["suggestions"] == {"enabled": True, "lookback_days": 7}, "suggestions changed: %r" % cfg["governance"]["complexity_analyzer_config"].get("suggestions")' \
+  --set-json 'bifrost.governance.complexityAnalyzerConfig={"keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]},"suggestions":{"enabled":true,"lookback_days":7}}'
+
 # Cleanup
 rm -f /tmp/helm-template-output.yaml
 
