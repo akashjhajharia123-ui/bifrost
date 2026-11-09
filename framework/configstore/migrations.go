@@ -592,6 +592,7 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_datasheet_overrides_table"}, run: migrationAddDatasheetOverridesTable},
 	{IDs: []string{"add_usage_estimation_tokenizers_json_column"}, run: migrationAddUsageEstimationTokenizersJSONColumn},
 	{IDs: []string{"add_model_routing_suggestion_schedules_table"}, run: migrationAddComplexitySuggestionSchedulesTable},
+	{IDs: []string{"add_model_routers_table"}, run: migrationAddModelRoutersTable},
 }
 
 // warpLogEmbeddingColumns are the semantic-search configuration columns added
@@ -13722,6 +13723,24 @@ func migrationBackfillDefaultComplexityExemplars(ctx context.Context, db *gorm.D
 		return fmt.Errorf("error running %s migration: %w", migrationName, err)
 	}
 	return nil
+}
+
+// migrationAddModelRoutersTable creates model_routers. Routers start empty:
+// the complexity config stays in governance_config, where the Complexity
+// Router page keeps editing it, and nothing is copied out of it.
+func migrationAddModelRoutersTable(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_model_routers_table"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	return RunSingleMigration(ctx, nil, db, logger, &migrator.Migration{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			return tx.WithContext(ctx).AutoMigrate(&tables.TableModelRouter{})
+		},
+		Rollback: func(*gorm.DB) error {
+			return fmt.Errorf("%s is non-rollbackable: dropping model_routers would delete every model router", migrationName)
+		},
+	})
 }
 
 func appendMissingDefaultComplexityExemplars(config *ComplexityAnalyzerConfig, defaults ComplexityEditableKeywordConfig) int {

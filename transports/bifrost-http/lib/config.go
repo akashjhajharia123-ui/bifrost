@@ -233,6 +233,7 @@ type ConfigData struct {
 	Agents             []*AgentRegistrationFileConfig        `json:"agents,omitempty"`
 	Relays             []*schemas.RelayConfig                `json:"relays,omitempty"`
 	DatasheetOverrides []DatasheetOverrideFileConfig         `json:"datasheet_overrides,omitempty"`
+	ModelRouters       []configstore.ModelRouter             `json:"model_routers,omitempty"`
 	Governance         *configstore.GovernanceConfig         `json:"governance,omitempty"`
 	VectorStoreConfig  *vectorstore.Config                   `json:"vector_store,omitempty"`
 	ConfigStoreConfig  *configstore.Config                   `json:"config_store,omitempty"`
@@ -494,6 +495,8 @@ func (cd *ConfigData) sectionPresent(name string) bool {
 		return cd.Relays != nil
 	case "datasheet_overrides":
 		return cd.DatasheetOverrides != nil
+	case "model_routers":
+		return cd.ModelRouters != nil
 	case "governance":
 		return cd.Governance != nil
 	case "plugins":
@@ -581,6 +584,7 @@ func (cd *ConfigData) UnmarshalJSON(data []byte) error {
 		Agents             []*AgentRegistrationFileConfig        `json:"agents,omitempty"`
 		Relays             []*schemas.RelayConfig                `json:"relays,omitempty"`
 		DatasheetOverrides []DatasheetOverrideFileConfig         `json:"datasheet_overrides,omitempty"`
+		ModelRouters       []configstore.ModelRouter             `json:"model_routers,omitempty"`
 		Governance         *configstore.GovernanceConfig         `json:"governance,omitempty"`
 		VectorStoreConfig  json.RawMessage                       `json:"vector_store,omitempty"`
 		ConfigStoreConfig  json.RawMessage                       `json:"config_store,omitempty"`
@@ -614,6 +618,7 @@ func (cd *ConfigData) UnmarshalJSON(data []byte) error {
 	cd.Agents = temp.Agents
 	cd.Relays = temp.Relays
 	cd.DatasheetOverrides = temp.DatasheetOverrides
+	cd.ModelRouters = temp.ModelRouters
 	cd.Governance = temp.Governance
 	cd.Plugins = temp.Plugins
 	cd.WebSocket = temp.WebSocket
@@ -749,6 +754,7 @@ type Config struct {
 	Providers        map[schemas.ModelProvider]configstore.ProviderConfig
 	MCPConfig        *schemas.MCPConfig
 	GovernanceConfig *configstore.GovernanceConfig
+	ModelRouters     []configstore.ModelRouter // config.json's model routers, kept only without a config store
 	FrameworkConfig  *framework.FrameworkConfig
 	ProxyConfig      *configstoreTables.GlobalProxyConfig
 	// warpFileConfig is config.json's warp section, applied by ApplyWarpFileConfig once the Warp
@@ -1249,7 +1255,9 @@ func LoadConfig(ctx context.Context, configDirPath string) (*Config, error) {
 	loadRelaysConfig(ctx, config, &configData)
 	// 8. Governance config
 	loadGovernanceConfig(ctx, config, &configData)
-	// 8a. Agent Gateway registrations (after governance so file-declared virtual
+	// 8a. Model routers
+	syncModelRoutersFromFile(ctx, config, &configData)
+	// 8b. Agent Gateway registrations (after governance so file-declared virtual
 	// keys exist before agent grants referencing them are written)
 	loadAgentsConfig(ctx, config, &configData)
 	// 9. Auth config
@@ -4601,7 +4609,7 @@ func planComplexityAnalyzerConfigUpdate(config *Config, configData *ConfigData) 
 		config.GovernanceConfig = &configstore.GovernanceConfig{}
 	}
 
-	fileConfig, fileAsWritten, fileHashes, ok := complexityAnalyzerConfigFromFile(configData)
+	fileConfig, fileAsWritten, fileHashes, ok := complexityAnalyzerConfigFromFile("complexity analyzer config", configData.Governance.ComplexityAnalyzerConfig)
 	if !ok {
 		return nil
 	}
@@ -4628,24 +4636,174 @@ func planComplexityAnalyzerConfigUpdate(config *Config, configData *ConfigData) 
 	return merged
 }
 
-// complexityAnalyzerConfigFromFile validates the file-backed analyzer config and
-// returns the normalized config (what source-of-truth mode persists), the file as
+// fileModelRouters returns config.json's model_routers entries with their
+// ids trimmed, skipping, and logging, every repeat of an id already seen.
+func fileModelRouters(configData *ConfigData) []configstore.ModelRouter {
+	seen := make(map[string]bool, len(configData.ModelRouters))
+	entries := make([]configstore.ModelRouter, 0, len(configData.ModelRouters))
+	for _, entry := range configData.ModelRouters {
+		entry.ID = strings.TrimSpace(entry.ID)
+		if seen[entry.ID] {
+			logger.Error("skipping model_routers entry: id %q is declared more than once", entry.ID)
+			continue
+		}
+		seen[entry.ID] = true
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// fileModelRouter validates one config.json router and returns it normalized,
+// with its section hashes and its identity hash, plus the config as written
+// for the split-mode merge.
+func fileModelRouter(entry configstore.ModelRouter) (router configstore.ModelRouter, asWritten *configstore.ComplexityAnalyzerConfig, ok bool) {
+	if err := configstore.ValidateModelRouterIdentity(&entry); err != nil {
+		logger.Error("invalid model_routers entry in config file: %v", err)
+		return configstore.ModelRouter{}, nil, false
+	}
+	raw := entry.ComplexityAnalyzerConfig
+	normalized, asWritten, _, ok := complexityAnalyzerConfigFromFile(fmt.Sprintf("model router %q", entry.ID), &raw)
+	if !ok {
+		return configstore.ModelRouter{}, nil, false
+	}
+	return configstore.ModelRouter{
+		ID:                       entry.ID,
+		Name:                     entry.Name,
+		Description:              entry.Description,
+		ComplexityAnalyzerConfig: *normalized,
+		ConfigHash:               configstore.GenerateModelRouterHash(entry),
+	}, asWritten, true
+}
+
+// syncModelRoutersFromFile reconciles config.json's model routers with the
+// store when the file has a model_routers section. Routers are independent of
+// governance.complexity_analyzer_config, which mergeGovernanceConfig applies.
+//
+// In source-of-truth mode the file's config is written whenever it differs
+// from the stored one, and stored routers the file does not declare are
+// deleted. In split mode only the sections whose hash changed are applied,
+// merged into what the store holds, so dashboard edits to the rest survive a
+// reboot, and a router new to the store is created from the file as written.
+// Name and description follow their own hash the same way. Each router is
+// written on its own, so one bad entry is logged and skipped without holding
+// back the others. Without a config store the routers are kept on
+// config.ModelRouters.
+func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *ConfigData) {
+	if config == nil || configData == nil || !configData.sectionPresent("model_routers") {
+		return
+	}
+	type declaredRouter struct {
+		router    configstore.ModelRouter
+		asWritten *configstore.ComplexityAnalyzerConfig
+	}
+	entries := fileModelRouters(configData)
+	declared := make([]declaredRouter, 0, len(entries))
+	for _, entry := range entries {
+		router, asWritten, ok := fileModelRouter(entry)
+		if ok {
+			declared = append(declared, declaredRouter{router: router, asWritten: asWritten})
+		}
+	}
+
+	if config.ConfigStore == nil {
+		routers := make([]configstore.ModelRouter, 0, len(declared))
+		for _, d := range declared {
+			routers = append(routers, d.router)
+		}
+		config.ModelRouters = routers
+		return
+	}
+
+	stored, err := config.ConfigStore.GetModelRouters(ctx)
+	if err != nil {
+		logger.Error("failed to read model routers for config file sync: %v", err)
+		return
+	}
+	storedByID := make(map[string]configstore.ModelRouter, len(stored))
+	for _, router := range stored {
+		storedByID[router.ID] = router
+	}
+	sourceOfTruth := configData.isConfigJSONSourceOfTruth()
+
+	// Undeclared routers go first, so a declared router can take the name of
+	// one being removed, as routing rules are pruned before their inserts.
+	if sourceOfTruth {
+		keep := map[string]bool{}
+		for _, entry := range configData.ModelRouters {
+			// Every declared id is kept, valid or not: a typo in an entry must
+			// not delete the router it meant to configure.
+			keep[strings.TrimSpace(entry.ID)] = true
+		}
+		for _, router := range stored {
+			if keep[router.ID] {
+				continue
+			}
+			if err := config.ConfigStore.DeleteModelRouter(ctx, router.ID); err != nil && !errors.Is(err, configstore.ErrNotFound) {
+				logger.Error("failed to delete model router %q absent from config file: %v", router.ID, err)
+			}
+		}
+	}
+
+	for _, d := range declared {
+		current, exists := storedByID[d.router.ID]
+		next := d.router
+		if exists && !sourceOfTruth {
+			identityChanged := current.ConfigHash != d.router.ConfigHash
+			configChanged := !current.ConfigHashes.Equal(d.router.ConfigHashes)
+			if !identityChanged && !configChanged {
+				continue
+			}
+			next = current
+			if configChanged {
+				merged, err := configstore.MergeComplexityAnalyzerConfigByHashes(&current.ComplexityAnalyzerConfig, d.asWritten)
+				if err != nil {
+					logger.Error("failed to merge model router %q from config file: %v", d.router.ID, err)
+					continue
+				}
+				next.ComplexityAnalyzerConfig = *merged
+			}
+			if identityChanged {
+				next.Name, next.Description, next.ConfigHash = d.router.Name, d.router.Description, d.router.ConfigHash
+			}
+		}
+		if exists {
+			// The fingerprint is runtime bookkeeping the file never carries.
+			next.EmbeddingFingerprint = current.EmbeddingFingerprint
+			if reflect.DeepEqual(current, next) {
+				continue
+			}
+			err = config.ConfigStore.UpdateModelRouter(ctx, &next)
+		} else {
+			err = config.ConfigStore.CreateModelRouter(ctx, &next)
+			if errors.Is(err, configstore.ErrAlreadyExists) {
+				// A stored row this version cannot read is left out of the list
+				// above; the file's declaration replaces it.
+				err = config.ConfigStore.UpdateModelRouter(ctx, &next)
+			}
+		}
+		if err != nil {
+			logger.Error("failed to sync model router %q from config file: %v", d.router.ID, err)
+		}
+	}
+}
+
+// complexityAnalyzerConfigFromFile validates a file-backed analyzer config (label
+// names it in logs) and returns the normalized config (what source-of-truth mode persists), the file as
 // written (what the split-mode merge reads), and the canonical section hashes used
 // to detect whether config.json changed. Hashes and the merge take presence from
 // the file as written: GenerateComplexityAnalyzerConfigHashes and
 // MergeComplexityAnalyzerConfigByHashes treat an omitted classifier, decision or
 // semantic section as "no opinion", and normalizing first would hand them a default
 // classifier, hash it, and then apply it over the one chosen in the dashboard.
-func complexityAnalyzerConfigFromFile(configData *ConfigData) (normalized, asWritten *configstore.ComplexityAnalyzerConfig, hashes configstore.ComplexityAnalyzerConfigHashes, ok bool) {
-	raw := configData.Governance.ComplexityAnalyzerConfig
+func complexityAnalyzerConfigFromFile(label string, raw *configstore.ComplexityAnalyzerConfig) (normalized, asWritten *configstore.ComplexityAnalyzerConfig, hashes configstore.ComplexityAnalyzerConfigHashes, ok bool) {
 	fileConfig, err := complexity.ValidateAndNormalize(raw)
 	if err != nil {
-		logger.Error("invalid complexity analyzer config in config file: %v", err)
+		logger.Error("invalid %s in config file: %v", label, err)
 		return nil, nil, configstore.ComplexityAnalyzerConfigHashes{}, false
 	}
 	fileHashes, err := configstore.GenerateComplexityAnalyzerConfigHashes(raw)
 	if err != nil {
-		logger.Warn("failed to generate complexity analyzer config hashes: %v", err)
+		logger.Warn("failed to generate %s hashes: %v", label, err)
 		return nil, nil, configstore.ComplexityAnalyzerConfigHashes{}, false
 	}
 	fileConfig.ConfigHashes = fileHashes
