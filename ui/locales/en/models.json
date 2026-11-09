@@ -2392,6 +2392,7 @@
 				"configuration": "Configuration",
 				"models": "Models",
 				"routing": "Routing",
+				"test": "Test",
 				"unsaved": "Unsaved changes"
 			},
 			"wizard": {
@@ -2430,7 +2431,10 @@
 					"turnOn": "Turn the router on",
 					"turnOnDone": "It takes the requests its routing matches.",
 					"turnOnPending": "A router takes no requests until it's on. Check its routing first: with no condition, it takes every request in its scope.",
-					"reviewRouting": "Review routing"
+					"reviewRouting": "Review routing",
+					"test": "Test a request",
+					"testDetail": "Optional. Check a few requests before sending traffic.",
+					"testAction": "Test"
 				},
 				"facts": {
 					"classifier": "Classifier",
@@ -2479,6 +2483,24 @@
 				"conditionHelp": "Leave it empty to take every request in the scope. Match the model field to let apps ask for this router by name. The tier can't be used here: the router decides it after it takes the request.",
 				"saved": "Routing saved",
 				"saveFailed": "Failed to save routing: {{error}}"
+			},
+			"test": {
+				"description": "Classify sample requests with the router as it is served now, to check which tier and model each would get. Nothing is saved.",
+				"placeholder": "One request per line. Start a line with SIMPLE:, MEDIUM: or COMPLEX: to check the tier it should get.",
+				"run_one": "Classify {{count}} request",
+				"run_other": "Classify {{count}} requests",
+				"hint": "A decision-model or LLM router makes one model call per request.",
+				"tooMany": "Classify at most {{max}} requests at a time.",
+				"failed": "Classification failed: {{error}}",
+				"unclassified": "No tier",
+				"accuracy": "{{correct}} of {{labeled}} labelled requests got the expected tier",
+				"columnStatement": "Request",
+				"columnTier": "Tier",
+				"columnHow": "Decided by",
+				"columnModel": "Model",
+				"correct": "Expected tier",
+				"expected": "expected {{tier}}",
+				"keepsModel": "Keeps the request's model"
 			}
 		}
 	},

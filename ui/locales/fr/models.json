@@ -2392,6 +2392,7 @@
 				"configuration": "Configuration",
 				"models": "Modèles",
 				"routing": "Routage",
+				"test": "Tester",
 				"unsaved": "Modifications non enregistrées"
 			},
 			"wizard": {
@@ -2430,7 +2431,10 @@
 					"turnOn": "Activer le routeur",
 					"turnOnDone": "Il prend les requêtes auxquelles correspond son routage.",
 					"turnOnPending": "Un routeur ne prend aucune requête tant qu'il n'est pas activé. Vérifiez d'abord son routage : sans condition, il prend toutes les requêtes de sa portée.",
-					"reviewRouting": "Vérifier le routage"
+					"reviewRouting": "Vérifier le routage",
+					"test": "Tester une requête",
+					"testDetail": "Facultatif. Vérifiez quelques requêtes avant d’envoyer du trafic.",
+					"testAction": "Tester"
 				},
 				"facts": {
 					"classifier": "Classificateur",
@@ -2479,6 +2483,24 @@
 				"conditionHelp": "Laissez vide pour prendre toutes les requêtes de la portée. Testez le champ modèle pour que les applications demandent ce routeur par son nom. Le niveau ne peut pas être utilisé ici : le routeur le décide après avoir pris la requête.",
 				"saved": "Routage enregistré",
 				"saveFailed": "Impossible d'enregistrer le routage : {{error}}"
+			},
+			"test": {
+				"description": "Classez des requêtes d’exemple avec le routeur tel qu’il est servi actuellement, pour vérifier le niveau et le modèle que chacune obtiendrait. Rien n’est enregistré.",
+				"placeholder": "Une requête par ligne. Commencez une ligne par SIMPLE:, MEDIUM: ou COMPLEX: pour vérifier le niveau attendu.",
+				"run_one": "Classer {{count}} requête",
+				"run_other": "Classer {{count}} requêtes",
+				"hint": "Un routeur à modèle de décision ou LLM fait un appel au modèle par requête.",
+				"tooMany": "Classez au plus {{max}} requêtes à la fois.",
+				"failed": "Échec de la classification : {{error}}",
+				"unclassified": "Aucun niveau",
+				"accuracy": "{{correct}} requêtes étiquetées sur {{labeled}} ont obtenu le niveau attendu",
+				"columnStatement": "Requête",
+				"columnTier": "Niveau",
+				"columnHow": "Décidé par",
+				"columnModel": "Modèle",
+				"correct": "Niveau attendu",
+				"expected": "attendu : {{tier}}",
+				"keepsModel": "Conserve le modèle de la requête"
 			}
 		}
 	},

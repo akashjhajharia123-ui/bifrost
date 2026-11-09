@@ -2392,6 +2392,7 @@
 				"configuration": "Configurazione",
 				"models": "Modelli",
 				"routing": "Routing",
+				"test": "Prova",
 				"unsaved": "Modifiche non salvate"
 			},
 			"wizard": {
@@ -2430,7 +2431,10 @@
 					"turnOn": "Attiva il router",
 					"turnOnDone": "Prende le richieste a cui corrisponde il suo routing.",
 					"turnOnPending": "Un router non prende richieste finché non è attivo. Controlla prima il suo routing: senza condizione prende ogni richiesta del suo ambito.",
-					"reviewRouting": "Controlla il routing"
+					"reviewRouting": "Controlla il routing",
+					"test": "Prova una richiesta",
+					"testDetail": "Facoltativo. Controlla alcune richieste prima di inviare traffico.",
+					"testAction": "Prova"
 				},
 				"facts": {
 					"classifier": "Classificatore",
@@ -2479,6 +2483,24 @@
 				"conditionHelp": "Lasciala vuota per prendere ogni richiesta dell'ambito. Confronta il campo modello per permettere alle app di richiedere questo router per nome. Il livello non può essere usato qui: il router lo decide dopo aver preso la richiesta.",
 				"saved": "Routing salvato",
 				"saveFailed": "Impossibile salvare il routing: {{error}}"
+			},
+			"test": {
+				"description": "Classifica richieste di esempio con il router così come è servito ora, per verificare quale livello e quale modello otterrebbe ciascuna. Non viene salvato nulla.",
+				"placeholder": "Una richiesta per riga. Inizia una riga con SIMPLE:, MEDIUM: o COMPLEX: per verificare il livello atteso.",
+				"run_one": "Classifica {{count}} richiesta",
+				"run_other": "Classifica {{count}} richieste",
+				"hint": "Un router con modello decisionale o LLM effettua una chiamata al modello per ogni richiesta.",
+				"tooMany": "Classifica al massimo {{max}} richieste alla volta.",
+				"failed": "Classificazione non riuscita: {{error}}",
+				"unclassified": "Nessun livello",
+				"accuracy": "{{correct}} su {{labeled}} richieste etichettate hanno ottenuto il livello atteso",
+				"columnStatement": "Richiesta",
+				"columnTier": "Livello",
+				"columnHow": "Deciso da",
+				"columnModel": "Modello",
+				"correct": "Livello atteso",
+				"expected": "atteso {{tier}}",
+				"keepsModel": "Mantiene il modello della richiesta"
 			}
 		}
 	},

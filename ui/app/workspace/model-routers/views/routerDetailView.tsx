@@ -20,10 +20,11 @@ import { RouterConfigurationSheets } from "./routerConfigurationEditor";
 import RouterDetailsDialog from "./routerDetailsDialog";
 import { RouterEnabledSwitch } from "./routersTable";
 import { RoutingTab } from "./routingTab";
+import { TestTab } from "./testTab";
 import { useRouterConfigForm } from "./useRouterConfigForm";
 import type { RouterTraffic, TrafficWindow } from "./useRouterTraffic";
 
-export const ROUTER_TABS = ["overview", "configuration", "models", "routing"] as const;
+export const ROUTER_TABS = ["overview", "configuration", "models", "routing", "test"] as const;
 export type RouterTab = (typeof ROUTER_TABS)[number];
 
 // A count beside a tab's name, as the project page shows them.
@@ -55,6 +56,8 @@ export default function RouterDetailView({ routerId, traffic, trafficWindow, onB
 	const [deleteRouter, { isLoading: isDeleting }] = useDeleteModelRouterMutation();
 	const [detailsOpen, setDetailsOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
+	// Whether a test ran on this visit; testing is optional and nothing records it.
+	const [tested, setTested] = useState(false);
 
 	const config = useRouterConfigForm({
 		saved: data,
@@ -133,6 +136,9 @@ export default function RouterDetailView({ routerId, traffic, trafficWindow, onB
 							<TabsTrigger value="routing" data-testid="model-router-tab-routing">
 								{tmr("tabs.routing")}
 							</TabsTrigger>
+							<TabsTrigger value="test" data-testid="model-router-tab-test">
+								{tmr("tabs.test")}
+							</TabsTrigger>
 						</TabsList>
 					</div>
 					<div className="ml-auto flex items-center gap-3">
@@ -190,6 +196,7 @@ export default function RouterDetailView({ routerId, traffic, trafficWindow, onB
 						router={data}
 						traffic={traffic ? (traffic.get(routerId) ?? { requests: 0, cost: 0, costTrend: null }) : undefined}
 						trafficWindow={trafficWindow}
+						tested={tested}
 						onNavigate={(next) => void setTab(next)}
 					/>
 				</TabsContent>
@@ -201,6 +208,9 @@ export default function RouterDetailView({ routerId, traffic, trafficWindow, onB
 				</TabsContent>
 				<TabsContent value="routing" className="flex min-h-0 flex-col overflow-hidden">
 					<RoutingTab router={data} canUpdate={canUpdate} />
+				</TabsContent>
+				<TabsContent value="test" className="flex min-h-0 flex-col overflow-hidden">
+					<TestTab router={data} onRun={() => setTested(true)} />
 				</TabsContent>
 			</Tabs>
 

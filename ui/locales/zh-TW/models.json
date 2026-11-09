@@ -2390,6 +2390,7 @@
 				"configuration": "配置",
 				"models": "模型",
 				"routing": "路由",
+				"test": "測試",
 				"unsaved": "未儲存的變更"
 			},
 			"wizard": {
@@ -2428,7 +2429,10 @@
 					"turnOn": "開啟路由器",
 					"turnOnDone": "它會接手與其路由相符的請求。",
 					"turnOnPending": "路由器開啟前不會接手任何請求。請先檢查其路由：沒有條件時，它會接手其範圍內的所有請求。",
-					"reviewRouting": "檢查路由"
+					"reviewRouting": "檢查路由",
+					"test": "測試請求",
+					"testDetail": "選用。在傳送流量前檢查幾個請求。",
+					"testAction": "測試"
 				},
 				"facts": {
 					"classifier": "分類器",
@@ -2477,6 +2481,24 @@
 				"conditionHelp": "留空則接手範圍內的所有請求。比對模型欄位可讓應用程式依名稱請求此路由器。此處不能使用層級：路由器在接手請求後才決定層級。",
 				"saved": "路由已儲存",
 				"saveFailed": "無法儲存路由：{{error}}"
+			},
+			"test": {
+				"description": "使用目前提供的路由器將範例請求分類，檢查每個請求會得到哪個層級與模型。不會儲存任何內容。",
+				"placeholder": "每行一個請求。在行首加上 SIMPLE:、MEDIUM: 或 COMPLEX: 可檢查其應得的層級。",
+				"run_one": "分類 {{count}} 個請求",
+				"run_other": "分類 {{count}} 個請求",
+				"hint": "使用決策模型或 LLM 的路由器會為每個請求呼叫一次模型。",
+				"tooMany": "每次最多分類 {{max}} 個請求。",
+				"failed": "分類失敗：{{error}}",
+				"unclassified": "無層級",
+				"accuracy": "{{labeled}} 個已標註請求中有 {{correct}} 個得到預期層級",
+				"columnStatement": "請求",
+				"columnTier": "層級",
+				"columnHow": "判定方式",
+				"columnModel": "模型",
+				"correct": "預期層級",
+				"expected": "預期 {{tier}}",
+				"keepsModel": "保留請求的模型"
 			}
 		}
 	},
