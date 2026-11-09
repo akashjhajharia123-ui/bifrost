@@ -321,7 +321,10 @@ func TestModelRouterConfigSchema(t *testing.T) {
 	valid := `{"governance":{"complexity_analyzer_config":{"keywords":{"simple_keywords":["a"],"medium_keywords":["b"],"complex_keywords":["c"]}}},` +
 		`"model_routers":[` +
 		routerJSON("default", "General", "", "s", "m", "c") + "," +
-		routerJSON("support-desk_2", "Support", `"description":"Support desk traffic",`+semantic+`,"session":{"enabled":true}`, "s", "m", "c") +
+		routerJSON("support-desk_2", "Support", `"description":"Support desk traffic",`+semantic+`,"session":{"enabled":true},`+
+			`"targets":[{"tier":"COMPLEX","provider":"anthropic","model":"claude-opus","weight":0.5,"fallbacks":["openai/gpt-4o"]},{"tier":"COMPLEX","provider":"anthropic","model":"claude-sonnet","weight":0.5}],`+
+			`"routing":{"enabled":true,"scope":"team","scope_id":"team-1","cel_expression":"model == \"support-assistant\"","query":{"combinator":"and","rules":[]},"priority":2}`, "s", "m", "c") + "," +
+		routerJSON("llm-router", "LLM", `"classifier":"llm","llm":{"provider":"openai","model":"gpt-4o-mini"},"session":{"enabled":true}`, "s", "m", "c") +
 		`]}`
 	require.NoError(t, ValidateConfigSchema([]byte(valid), schema))
 
@@ -332,12 +335,127 @@ func TestModelRouterConfigSchema(t *testing.T) {
 		"unknown field":            `{"model_routers":[` + routerJSON("support", "Support", `"phrases":["s"]`, "s", "m", "c") + `]}`,
 		"session without semantic": `{"model_routers":[` + routerJSON("support", "Support", `"session":{"enabled":true}`, "s", "m", "c") + `]}`,
 		"suggestions block":        `{"model_routers":[` + routerJSON("support", "Support", `"suggestions":{"enabled":false}`, "s", "m", "c") + `]}`,
+		"llm without an llm block": `{"model_routers":[` + routerJSON("support", "Support", `"classifier":"llm"`, "s", "m", "c") + `]}`,
+		"unknown target tier":      `{"model_routers":[` + routerJSON("support", "Support", `"targets":[{"tier":"HARD","model":"m","weight":1}]`, "s", "m", "c") + `]}`,
+		"target key w/o provider":  `{"model_routers":[` + routerJSON("support", "Support", `"targets":[{"tier":"SIMPLE","model":"m","key_id":"k","weight":1}]`, "s", "m", "c") + `]}`,
+		"target first-token limit": `{"model_routers":[` + routerJSON("support", "Support", `"targets":[{"tier":"SIMPLE","model":"m","weight":1,"ttft_timeout_ms":500}]`, "s", "m", "c") + `]}`,
+		"routing user scope":       `{"model_routers":[` + routerJSON("support", "Support", `"routing":{"scope":"user","scope_id":"u"}`, "s", "m", "c") + `]}`,
+		"routing unknown field":    `{"model_routers":[` + routerJSON("support", "Support", `"routing":{"scope":"global","chain_rule":true}`, "s", "m", "c") + `]}`,
+		"routing team without id":  `{"model_routers":[` + routerJSON("support", "Support", `"routing":{"scope":"team"}`, "s", "m", "c") + `]}`,
 	}
 	for name, config := range invalid {
 		t.Run(name, func(t *testing.T) {
 			require.Error(t, ValidateConfigSchema([]byte(config), schema))
 		})
 	}
+}
+
+// TestModelRouterConfigTargets walks a router's targets through reboots: the
+// file sets them, an entry without targets leaves dashboard targets alone, a
+// dashboard edit survives an unchanged file, a changed entry re-applies them,
+// source-of-truth mode reverts drift, and invalid targets skip the router.
+func TestModelRouterConfigTargets(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+	mini := `"targets":[{"tier":"SIMPLE","provider":"openai","model":"gpt-4o-mini","weight":1}]`
+	boot := func(sourceOfTruth bool, name, extra string) {
+		prefix := `{`
+		if sourceOfTruth {
+			prefix = `{"source_of_truth":"config.json",`
+		}
+		bootFromJSON(t, store, prefix+`"model_routers":[`+routerJSON("support", name, extra, "s", "m", "c")+`]}`)
+	}
+	models := func() []string {
+		router, err := store.GetModelRouter(ctx, "support")
+		require.NoError(t, err)
+		out := make([]string, 0, len(router.Targets))
+		for _, target := range router.Targets {
+			out = append(out, *target.Model)
+		}
+		return out
+	}
+	dashboardSets := func(model string) {
+		require.NoError(t, store.SetModelRouterTargets(ctx, "support", []tables.TableModelRouterTarget{
+			{Tier: "SIMPLE", Model: &model, Weight: 1},
+		}))
+	}
+
+	boot(false, "Support", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models())
+
+	dashboardSets("claude-haiku")
+	boot(false, "Support", mini)
+	assert.Equal(t, []string{"claude-haiku"}, models(), "a dashboard edit survives an unchanged file")
+
+	boot(false, "Support desk", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models(), "a changed entry re-applies its targets")
+
+	dashboardSets("claude-haiku")
+	boot(true, "Support desk", mini)
+	assert.Equal(t, []string{"gpt-4o-mini"}, models(), "source of truth reverts drift")
+
+	dashboardSets("claude-haiku")
+	boot(true, "Support desk", "")
+	assert.Equal(t, []string{"claude-haiku"}, models(), "an entry without targets leaves them alone")
+
+	boot(false, "Support desk", `"targets":[{"tier":"SIMPLE","model":"m","weight":0.5}]`)
+	assert.Equal(t, []string{"claude-haiku"}, models(), "invalid targets are not applied")
+}
+
+// TestModelRouterConfigRouting walks a router's routing through reboots on
+// the same terms as its targets, and pins what keeps routing from applying: a
+// condition that uses complexity_tier skips the whole entry, and a scope
+// whose entity does not exist, or a user scope, leaves the stored routing.
+func TestModelRouterConfigRouting(t *testing.T) {
+	initTestLogger()
+	store := createTestSQLiteConfigStore(t, t.TempDir())
+	ctx := context.Background()
+	on := `"routing":{"enabled":true,"scope":"global","cel_expression":"model == \"support-assistant\"","priority":3}`
+	boot := func(sourceOfTruth bool, name, extra string) {
+		prefix := `{`
+		if sourceOfTruth {
+			prefix = `{"source_of_truth":"config.json",`
+		}
+		bootFromJSON(t, store, prefix+`"model_routers":[`+routerJSON("support", name, extra, "s", "m", "c")+`]}`)
+	}
+	routing := func() configstore.ModelRouterRouting {
+		router, err := store.GetModelRouter(ctx, "support")
+		require.NoError(t, err)
+		require.NotNil(t, router.Routing)
+		return *router.Routing
+	}
+	dashboardTurnsOff := func() {
+		current := routing()
+		current.Enabled = false
+		require.NoError(t, store.SetModelRouterRouting(ctx, "support", current))
+	}
+
+	boot(false, "Support", on)
+	assert.Equal(t, configstore.ModelRouterRouting{Enabled: true, Scope: "global", CelExpression: `model == "support-assistant"`, Priority: 3}, routing())
+
+	dashboardTurnsOff()
+	boot(false, "Support", on)
+	assert.False(t, routing().Enabled, "a dashboard edit survives an unchanged file")
+
+	boot(false, "Support desk", on)
+	assert.True(t, routing().Enabled, "a changed entry re-applies its routing")
+
+	dashboardTurnsOff()
+	boot(true, "Support desk", on)
+	assert.True(t, routing().Enabled, "source of truth reverts drift")
+
+	dashboardTurnsOff()
+	boot(true, "Support desk", "")
+	assert.False(t, routing().Enabled, "an entry without routing leaves it alone")
+
+	boot(true, "Support desk", `"routing":{"enabled":true,"scope":"team","scope_id":"no-such-team","priority":3}`)
+	assert.Equal(t, "global", routing().Scope, "a scope whose entity does not exist is not applied")
+
+	boot(true, "Customer support", `"routing":{"enabled":true,"scope":"global","cel_expression":"complexity_tier == \"SIMPLE\""}`)
+	router, err := store.GetModelRouter(ctx, "support")
+	require.NoError(t, err)
+	assert.Equal(t, "Support desk", router.Name, "a condition that uses complexity_tier skips the entry")
 }
 
 // TestModelRouterConfigLoadConfigEndToEnd boots a real config.json through

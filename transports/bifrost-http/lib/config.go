@@ -4654,8 +4654,8 @@ func fileModelRouters(configData *ConfigData) []configstore.ModelRouter {
 }
 
 // fileModelRouter validates one config.json router and returns it normalized,
-// with its section hashes and its identity hash, plus the config as written
-// for the split-mode merge.
+// with its section hashes, the targets and routing it declares, and its
+// identity hash, plus the config as written for the split-mode merge.
 func fileModelRouter(entry configstore.ModelRouter) (router configstore.ModelRouter, asWritten *configstore.ComplexityAnalyzerConfig, ok bool) {
 	if err := configstore.ValidateModelRouterIdentity(&entry); err != nil {
 		logger.Error("invalid model_routers entry in config file: %v", err)
@@ -4666,13 +4666,98 @@ func fileModelRouter(entry configstore.ModelRouter) (router configstore.ModelRou
 	if !ok {
 		return configstore.ModelRouter{}, nil, false
 	}
+	if entry.Targets != nil {
+		if err := configstore.ValidateModelRouterTargets(entry.Targets); err != nil {
+			logger.Error("invalid targets for model router %q in config file: %v", entry.ID, err)
+			return configstore.ModelRouter{}, nil, false
+		}
+	}
+	if entry.Routing != nil {
+		routing := *entry.Routing
+		if err := configstore.ValidateModelRouterRouting(&routing); err != nil {
+			logger.Error("invalid routing for model router %q in config file: %v", entry.ID, err)
+			return configstore.ModelRouter{}, nil, false
+		}
+		if err := rules.ValidateModelRouterCEL(routing.CelExpression); err != nil {
+			logger.Error("invalid routing condition for model router %q in config file: %v", entry.ID, err)
+			return configstore.ModelRouter{}, nil, false
+		}
+		entry.Routing = &routing
+	}
 	return configstore.ModelRouter{
 		ID:                       entry.ID,
 		Name:                     entry.Name,
 		Description:              entry.Description,
 		ComplexityAnalyzerConfig: *normalized,
+		Targets:                  entry.Targets,
+		Routing:                  entry.Routing,
 		ConfigHash:               configstore.GenerateModelRouterHash(entry),
 	}, asWritten, true
+}
+
+// syncModelRouterTargetsFromFile applies a config.json router's targets when
+// the entry declares them and they should win: always in source-of-truth mode
+// when they differ from the stored ones, and otherwise only when the entry
+// changed since it was last applied. An entry without targets leaves the
+// stored ones alone.
+func syncModelRouterTargetsFromFile(ctx context.Context, config *Config, id string, declared, stored []configstoreTables.TableModelRouterTarget, entryChanged, sourceOfTruth bool) {
+	if declared == nil || (!entryChanged && !sourceOfTruth) {
+		return
+	}
+	if configstore.ModelRouterTargetsHash(declared) == configstore.ModelRouterTargetsHash(stored) {
+		return
+	}
+	if err := config.ConfigStore.SetModelRouterTargets(ctx, id, declared); err != nil {
+		logger.Error("failed to sync targets of model router %q from config file: %v", id, err)
+	}
+}
+
+// syncModelRouterRoutingFromFile applies a config.json router's routing on the
+// same terms as its targets. The condition builder state is the dashboard's,
+// so it is not compared. Routing whose scope's entity does not exist is
+// logged and skipped, leaving the stored routing as it is.
+func syncModelRouterRoutingFromFile(ctx context.Context, config *Config, id string, declared, stored *configstore.ModelRouterRouting, entryChanged, sourceOfTruth bool) {
+	if declared == nil || (!entryChanged && !sourceOfTruth) {
+		return
+	}
+	if stored != nil {
+		file, current := *declared, *stored
+		file.Query, current.Query = nil, nil
+		if reflect.DeepEqual(file, current) {
+			return
+		}
+	}
+	if !modelRouterScopeResolves(ctx, config.ConfigStore, declared) {
+		logger.Warn("model router %s: scope %s with scope_id %v does not resolve to an existing entity (use the entity's id, not its name; config.json cannot scope to a user); its routing is not applied", id, declared.Scope, declared.ScopeID)
+		return
+	}
+	if err := config.ConfigStore.SetModelRouterRouting(ctx, id, *declared); err != nil {
+		logger.Error("failed to sync routing of model router %q from config file: %v", id, err)
+	}
+}
+
+// modelRouterScopeResolves reports whether a config.json router's scope
+// entity exists, once governance has synced. As with routing rules,
+// config.json cannot scope a router to a user.
+func modelRouterScopeResolves(ctx context.Context, store configstore.ConfigStore, routing *configstore.ModelRouterRouting) bool {
+	if routing.Scope == "global" {
+		return true
+	}
+	if routing.ScopeID == nil {
+		return false
+	}
+	var err error
+	switch routing.Scope {
+	case "virtual_key":
+		_, err = store.GetVirtualKey(ctx, *routing.ScopeID)
+	case "team":
+		_, err = store.GetTeam(ctx, *routing.ScopeID)
+	case "customer":
+		_, err = store.GetCustomer(ctx, *routing.ScopeID)
+	default:
+		return false
+	}
+	return err == nil
 }
 
 // syncModelRoutersFromFile reconciles config.json's model routers with the
@@ -4684,10 +4769,11 @@ func fileModelRouter(entry configstore.ModelRouter) (router configstore.ModelRou
 // deleted. In split mode only the sections whose hash changed are applied,
 // merged into what the store holds, so dashboard edits to the rest survive a
 // reboot, and a router new to the store is created from the file as written.
-// Name and description follow their own hash the same way. Each router is
-// written on its own, so one bad entry is logged and skipped without holding
-// back the others. Without a config store the routers are kept on
-// config.ModelRouters.
+// Name, description, targets and routing follow their own hash the same way;
+// targets and routing are written on their own, after the router, and only
+// when the entry declares them. Each router is written on its own, so one bad
+// entry is logged and skipped without holding back the others. Without a
+// config store the routers are kept on config.ModelRouters.
 func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *ConfigData) {
 	if config == nil || configData == nil || !configData.sectionPresent("model_routers") {
 		return
@@ -4746,6 +4832,7 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 
 	for _, d := range declared {
 		current, exists := storedByID[d.router.ID]
+		entryChanged := !exists || current.ConfigHash != d.router.ConfigHash
 		next := d.router
 		if exists && !sourceOfTruth {
 			identityChanged := current.ConfigHash != d.router.ConfigHash
@@ -4766,13 +4853,16 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 				next.Name, next.Description, next.ConfigHash = d.router.Name, d.router.Description, d.router.ConfigHash
 			}
 		}
+		// Targets and routing are applied on their own below, so a router is
+		// created with the default routing and its routing set after.
+		next.Targets, next.Routing = current.Targets, current.Routing
+		err = nil
 		if exists {
 			// The fingerprint is runtime bookkeeping the file never carries.
 			next.EmbeddingFingerprint = current.EmbeddingFingerprint
-			if reflect.DeepEqual(current, next) {
-				continue
+			if !reflect.DeepEqual(current, next) {
+				err = config.ConfigStore.UpdateModelRouter(ctx, &next)
 			}
-			err = config.ConfigStore.UpdateModelRouter(ctx, &next)
 		} else {
 			err = config.ConfigStore.CreateModelRouter(ctx, &next)
 			if errors.Is(err, configstore.ErrAlreadyExists) {
@@ -4783,7 +4873,10 @@ func syncModelRoutersFromFile(ctx context.Context, config *Config, configData *C
 		}
 		if err != nil {
 			logger.Error("failed to sync model router %q from config file: %v", d.router.ID, err)
+			continue
 		}
+		syncModelRouterTargetsFromFile(ctx, config, d.router.ID, d.router.Targets, current.Targets, entryChanged, sourceOfTruth)
+		syncModelRouterRoutingFromFile(ctx, config, d.router.ID, d.router.Routing, current.Routing, entryChanged, sourceOfTruth)
 	}
 }
 
