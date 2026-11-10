@@ -49,14 +49,32 @@ const suggestionPhrasePage = 500
 // Bifrost's configured store: capture never writes to the embedded one (see
 // captureTarget), so an embedded phrase bank still has its traffic there.
 func (c *SemanticClassifier) SuggestionSpace(ctx context.Context) (*SuggestionSpace, error) {
+	return c.snapshotSpace(ctx, true)
+}
+
+// ServingSpace snapshots the serving generation's phrase bank and embedding
+// function only, for testing phrases against it: no captured traffic is read,
+// so no capture store is needed, and EachCaptured and CountCaptured answer
+// ErrNoCaptureStore. The caller must Close it.
+func (c *SemanticClassifier) ServingSpace(ctx context.Context) (*SuggestionSpace, error) {
+	return c.snapshotSpace(ctx, false)
+}
+
+func (c *SemanticClassifier) snapshotSpace(ctx context.Context, needCapture bool) (*SuggestionSpace, error) {
 	c.mu.Lock()
 	generation := c.active
-	if c.closed || generation == nil || generation.embed == nil || generation.captureNamespace == "" {
+	if c.closed || generation == nil || generation.embed == nil || (needCapture && generation.captureNamespace == "") {
 		c.mu.Unlock()
 		return nil, ErrNoServingGeneration
 	}
 	embedBatch := c.embedBatch
-	captureStore := c.configuredStore
+	var captureStore vectorstore.VectorStore
+	if needCapture {
+		if captureStore = c.captureStoreLocked(); captureStore == nil {
+			c.mu.Unlock()
+			return nil, ErrNoCaptureStore
+		}
+	}
 	if isLocalChromemStore(generation.store) {
 		if c.localInFlight == nil {
 			c.localInFlight = make(map[*semanticGeneration]int)
@@ -150,6 +168,9 @@ func (s *SuggestionSpace) Embed(ctx context.Context, texts []string) ([][]float3
 // EachCaptured reads the space's captured requests from from through to; see the
 // package function of the same name.
 func (s *SuggestionSpace) EachCaptured(ctx context.Context, from, to time.Time, fn func([]CapturedRequest) error) error {
+	if s.Store == nil {
+		return ErrNoCaptureStore
+	}
 	return EachCaptured(ctx, s.Store, s.CaptureNamespace, from, to, fn)
 }
 
@@ -174,5 +195,8 @@ func (s *SuggestionSpace) ServedVersion() string { return s.Version }
 
 // CountCaptured counts the space's captured requests from from through to.
 func (s *SuggestionSpace) CountCaptured(ctx context.Context, from, to time.Time) (int, error) {
+	if s.Store == nil {
+		return 0, ErrNoCaptureStore
+	}
 	return CountCaptured(ctx, s.Store, s.CaptureNamespace, from, to)
 }

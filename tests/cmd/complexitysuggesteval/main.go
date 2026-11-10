@@ -31,6 +31,7 @@ import (
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/routing/complexity/suggest"
+	"github.com/maximhq/bifrost/plugins/routing/complexity/suggestrun"
 )
 
 type item struct {
@@ -60,12 +61,16 @@ func main() {
 		merge      = flag.Float64("merge", 0.85, "merge clusters whose centres are at least this similar")
 		join       = flag.Float64("join", 0.80, "a request this similar to a found cluster's centre joins it")
 		minReq     = flag.Int("min-requests", 6, "drop clusters with fewer requests")
+		minShare   = flag.Float64("min-share", -1, "raise -min-requests to this share of the clustered requests, as a run does (negative = off; 0 = the gateway's 0.001)")
+		maxPhrases = flag.Int("max-phrases", 0, "phrase bank capacity: suggest no more phrases than it has room for beside the default phrases, as a run does (0 = off; the gateway's is 750)")
+		maxAsked   = flag.Int("max-asked", 0, "ask about at most this many clusters, heaviest first, as a run does (0 = off; the gateway's is 200)")
 		batch      = flag.Int("batch", 8000, "requests clustered together")
 		maxMembers = flag.Int("max-members", 64, "members kept per cluster")
 		split      = flag.Float64("split", 0, "split clusters whose halves are less similar than this (0 = join threshold, -1 = off)")
 		rescue     = flag.Float64("rescue", 0, "merge undersized clusters with each other at this similarity (0 = default 0.75, -1 = off)")
 		workers    = flag.Int("workers", 10, "concurrent LLM calls")
-		instrFile  = flag.String("instructions", "", "file with custom suggestion instructions (default: suggest.DefaultInstructions)")
+		instrFile  = flag.String("instructions", "", "file with custom phrase-step instructions (default: suggest.DefaultInstructions)")
+		tierFile   = flag.String("tier-prompt", "", "file with the whole tier-step prompt body: instructions, definitions, examples (default: rendered by suggest.TierPrompt)")
 		dropBelow  = flag.Float64("drop-below", 0, "leave out of scoring suggestions covering less than this share of their own cluster")
 		onlyClust  = flag.Bool("cluster-only", false, "cluster, print cluster stats, and exit before any LLM call")
 	)
@@ -87,6 +92,7 @@ func main() {
 	}
 	clusterOnly = *onlyClust
 	dropCoverage = *dropBelow
+	minClusterShare, maxBankPhrases, maxAskedClusters = *minShare, *maxPhrases, *maxAsked
 	if *instrFile != "" {
 		data, err := os.ReadFile(*instrFile)
 		if err != nil {
@@ -98,6 +104,18 @@ func main() {
 			os.Exit(1)
 		}
 		opts.Instructions = string(data)
+	}
+	if *tierFile != "" {
+		data, err := os.ReadFile(*tierFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		if n := len([]rune(string(data))); n > suggest.MaxTierPromptChars {
+			fmt.Fprintf(os.Stderr, "error: the tier prompt is %d characters; the limit is %d\n", n, suggest.MaxTierPromptChars)
+			os.Exit(1)
+		}
+		tierPrompt = string(data)
 	}
 	if err := run(*jsonl, *out, *cache, *baseURL, *embedModel, *chatModel, *judgeModel, *judgeN, *testPct, opts); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -127,6 +145,13 @@ func validateFloatFlags(split, rescue, dropBelow float64) error {
 var (
 	clusterOnly  bool
 	dropCoverage float64
+	// minClusterShare, maxBankPhrases and maxAskedClusters mirror a gateway
+	// run's cluster floor, phrase bank room and per-run ask bound. A negative
+	// share and a zero room or bound turn each off.
+	minClusterShare  float64
+	maxBankPhrases   int
+	maxAskedClusters int
+	tierPrompt       string
 )
 
 type embedder struct{ api *apiClient }
@@ -192,10 +217,32 @@ func run(jsonlPath, outDir, cachePath, baseURL, embedModel, chatModel, judgeMode
 		train = append(train, suggest.Request{ID: fmt.Sprint(i), Text: it.Text, Count: it.Count, Vector: it.vec})
 	}
 
+	var window int
+	for _, r := range train {
+		window += max(r.Count, 1)
+	}
+	opts.Cluster.MinRequests = suggestrun.ClusterFloor(opts.Cluster.MinRequests, minClusterShare, window)
 	start := time.Now()
 	c := suggest.NewClusterer(opts.Cluster, live, opts.MatchFloor)
 	c.Add(train)
 	clusters := c.Clusters()
+	// As a run does: ask about the heaviest clusters only, as many as the
+	// per-run bound and the phrase bank's room allow.
+	room := -1
+	if maxBankPhrases > 0 {
+		room = max(0, maxBankPhrases-len(live))
+	}
+	limit := len(clusters)
+	if maxAskedClusters > 0 {
+		limit = min(limit, maxAskedClusters)
+	}
+	if room >= 0 {
+		limit = min(limit, room)
+	}
+	formed := len(clusters)
+	clusters = clusters[:limit]
+	fmt.Fprintf(os.Stderr, "cluster floor %d requests (window %d) · %d clusters formed, %d asked (bank room %d)\n",
+		opts.Cluster.MinRequests, window, formed, len(clusters), room)
 	clusterTime := time.Since(start)
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
@@ -226,12 +273,22 @@ func run(jsonlPath, outDir, cachePath, baseURL, embedModel, chatModel, judgeMode
 	}
 
 	start = time.Now()
+	// The tier step uses the chat model too. The eval's phrase bank is the
+	// shipped defaults, so it sends no router examples.
+	opts.Tier = &suggest.LLMTierDecider{LLM: llm{api}, Prompt: tierPrompt}
 	sgs, err := suggest.NewSuggester(live, embedder{api}, llm{api}, opts).SuggestAll(ctx, clusters)
 	if serr := api.save(); err == nil && serr != nil {
 		err = fmt.Errorf("save cache: %w", serr)
 	}
 	if err != nil {
 		return err
+	}
+	var overCapacity int64
+	// As a run does: phrases repeated across clusters are kept once, on the
+	// heaviest cluster that fits, before the room is counted.
+	sgs = suggestrun.FitSuggestions(sgs, room, &overCapacity)
+	if overCapacity > 0 {
+		fmt.Fprintf(os.Stderr, "%d suggestions left out: no room for their phrases\n", overCapacity)
 	}
 	suggestTime := time.Since(start)
 

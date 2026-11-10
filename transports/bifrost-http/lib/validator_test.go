@@ -2614,6 +2614,64 @@ func TestSchemaComplexityAnalyzerDependencies(t *testing.T) {
 				`"max_clustered_requests":5000,"min_cluster_requests":10,"provider":"openai","model":"gpt-5","instructions":"be brief"}`),
 		},
 		{
+			name: "suggestions accept a decision tier step",
+			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"provider":"openai","model":"gpt-5",`+
+				`"tier":{"classifier":"decision","provider":"typesafe","model":"jev-latest","instructions":"judge the work"}}`),
+		},
+		{
+			name:     "suggestions accept an llm tier step without a model",
+			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm"}}`),
+		},
+		{
+			name: "suggestions accept an edited tier prompt and per-tier criteria",
+			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"decision","prompt":"Refunds are SIMPLE.",`+
+				`"instructions":"Which tier?","criteria":{"SIMPLE":{"definition":"One short answer.","signals":[],"examples":["where is my refund"]}}}}`),
+		},
+		{
+			name:      "suggestions reject tier criteria for an unknown tier",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"decision","criteria":{"HARD":{"definition":"x"}}}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject tier criteria without a definition",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"decision","criteria":{"SIMPLE":{"examples":["hi"]}}}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject an unknown tier classifier",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"lexical"}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject a tier provider without a model",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm","provider":"openai"}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject a blank tier provider",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm","provider":"  ","model":"gpt-4o-mini"}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject a blank tier model",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm","provider":"openai","model":"\t"}}`),
+			wantError: true,
+		},
+		{
+			name:      "suggestions reject a blank tier provider and model",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm","provider":" ","model":" "}}`),
+			wantError: true,
+		},
+		{
+			name:     "suggestions accept a tier provider and model",
+			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"classifier":"llm","provider":"openai","model":"gpt-4o-mini"}}`),
+		},
+		{
+			name:      "suggestions reject unknown tier fields",
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"tier":{"mode":"llm"}}`),
+			wantError: true,
+		},
+		{
 			name:     "suggestions accept an hourly schedule",
 			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"schedule":{"every":"6h"}}`),
 		},
@@ -2644,36 +2702,36 @@ func TestSchemaComplexityAnalyzerDependencies(t *testing.T) {
 		},
 		{
 			name:      "suggestions reject a whitespace-only provider and model",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"provider":"  ","model":"\t"}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"provider":"  ","model":"\t"}`),
 			wantError: true,
 		},
 		{
 			name:      "suggestions reject a whitespace-only provider",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"provider":" ","model":"gpt-5"}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"provider":" ","model":"gpt-5"}`),
 			wantError: true,
 		},
 		{
 			name:      "suggestions reject a whitespace-only model",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"provider":"openai","model":"  "}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"provider":"openai","model":"  "}`),
 			wantError: true,
 		},
 		{
 			name:     "suggestions accept a first run with fractional seconds and an offset",
-			analyzer: complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"schedule":{"start_at":"2028-02-29T23:59:59.5+05:30"}}`),
+			analyzer: complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"schedule":{"start_at":"2028-02-29T23:59:59.5+05:30"}}`),
 		},
 		{
 			name:      "suggestions reject a first run on an impossible date",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-99-99T03:00:00Z"}}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-99-99T03:00:00Z"}}`),
 			wantError: true,
 		},
 		{
 			name:      "suggestions reject a first run past the end of its month",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-04-31T03:00:00Z"}}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-04-31T03:00:00Z"}}`),
 			wantError: true,
 		},
 		{
 			name:      "suggestions reject a first run at an impossible time",
-			analyzer:  complexityAnalyzerSchemaConfig(`,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-11-06T24:00:00Z"}}`),
+			analyzer:  complexityAnalyzerSchemaConfig(suggestionsSchemaPrereqs, `,"suggestions":{"enabled":true,"schedule":{"start_at":"2026-11-06T24:00:00Z"}}`),
 			wantError: true,
 		},
 		{
