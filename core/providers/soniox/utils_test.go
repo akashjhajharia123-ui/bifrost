@@ -30,6 +30,29 @@ func TestDeriveTTSBaseURL(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestDeriveRealtimeURL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{"global", "https://api.soniox.com", "wss://stt-rt.soniox.com/transcribe-websocket"},
+		{"regional host keeps its region", "https://api.in.soniox.com", "wss://stt-rt.in.soniox.com/transcribe-websocket"},
+		{"trailing slash is trimmed", "https://api.jp.soniox.com/", "wss://stt-rt.jp.soniox.com/transcribe-websocket"},
+		{"plain http becomes ws", "http://127.0.0.1:8080", "ws://127.0.0.1:8080/transcribe-websocket"},
+		{"proxy path is kept", "https://proxy.example.com/soniox", "wss://proxy.example.com/soniox/transcribe-websocket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := deriveRealtimeURL(tc.baseURL)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	_, err := deriveRealtimeURL("://bad")
+	assert.Error(t, err)
+}
+
 func TestConvertBifrostSpeechFormatToSoniox(t *testing.T) {
 	for format, want := range map[string]string{
 		"":          "mp3",
