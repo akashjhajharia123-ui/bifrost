@@ -1,0 +1,7 @@
+description: The identity asks for a model outside its access profile (BLOCKED_MODEL).
+surface: 3-llm-governance
+kind: llm
+model: ${BLOCKED_MODEL}
+prompt: ping
+expect:
+  surface: 3-llm-governance

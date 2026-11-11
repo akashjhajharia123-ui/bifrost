@@ -1,0 +1,7 @@
+description: A caller Bifrost does not know. In entra mode, use an app that is not mapped to a service account (set UNMAPPED_ENTRA_CLIENT_ID / _SECRET and caller UNMAPPED_).
+surface: 1-ingress-identity
+kind: llm
+caller_vk: sk-bf-not-a-real-key
+prompt: ping
+expect:
+  surface: 1-ingress-identity

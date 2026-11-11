@@ -1,0 +1,6 @@
+description: The LLM output rule runs Model Armor on the response in monitor mode. The call succeeds; the guardrail result is in the LLM log (revops trace / Observability > LLM Logs).
+surface: 8-llm-output-guardrail
+kind: llm
+prompt: Write one sentence describing a customer support quarter, and include the sample contact jane.doe@example.com.
+expect:
+  allowed: true
