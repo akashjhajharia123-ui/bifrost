@@ -42,6 +42,14 @@ rbac:
     # - bifrost.cluster.discovery.enabled=true
     # - bifrost.cluster.discovery.type=kubernetes
     enabled: true
+  licenseCheck:
+    # Bifrost Enterprise on bare-metal Kubernetes or OpenShift only.
+    # Create a ClusterRole/ClusterRoleBinding that lets the gateway read the
+    # kube-system namespace metadata (and, on OpenShift, the ClusterVersion).
+    # Enable it when your license is bound to this cluster (check type
+    # k8scluster); without it the license page reports k8s_permission_missing.
+    # The pod must also mount its token (serviceAccount.automount=true).
+    enabled: false
 
 # Annotations to add to the deployment metadata
 # Useful for tools like Keel (keel.sh) for automatic image updates

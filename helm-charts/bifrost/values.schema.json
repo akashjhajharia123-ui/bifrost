@@ -68,6 +68,16 @@
             }
           },
           "additionalProperties": false
+        },
+        "licenseCheck": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Create a ClusterRole/ClusterRoleBinding that lets the gateway read the kube-system namespace metadata, for Bifrost Enterprise licenses bound to a Kubernetes or OpenShift cluster"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
