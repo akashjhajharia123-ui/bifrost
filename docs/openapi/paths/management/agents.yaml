@@ -551,6 +551,12 @@ agent-history:
       required: false
       schema:
         type: string
+    - name: caller_correlation_id
+      in: query
+      required: false
+      description: Operations a caller delegated under its own A2A task (the caller's x-bf-agent-correlation-id).
+      schema:
+        type: string
     - name: delivery_id
       in: query
       required: false
@@ -835,6 +841,12 @@ agent-history-stats:
       required: false
       schema:
         type: string
+    - name: caller_correlation_id
+      in: query
+      required: false
+      description: Operations a caller delegated under its own A2A task (the caller's x-bf-agent-correlation-id).
+      schema:
+        type: string
     - name: delivery_id
       in: query
       required: false
@@ -1014,6 +1026,12 @@ agent-history-histogram:
       required: false
       schema:
         type: string
+    - name: caller_correlation_id
+      in: query
+      required: false
+      description: Operations a caller delegated under its own A2A task (the caller's x-bf-agent-correlation-id).
+      schema:
+        type: string
     - name: delivery_id
       in: query
       required: false
@@ -1191,6 +1209,12 @@ agent-history-top-agents:
     - name: push_config_id
       in: query
       required: false
+      schema:
+        type: string
+    - name: caller_correlation_id
+      in: query
+      required: false
+      description: Operations a caller delegated under its own A2A task (the caller's x-bf-agent-correlation-id).
       schema:
         type: string
     - name: delivery_id
