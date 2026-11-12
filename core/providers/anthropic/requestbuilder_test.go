@@ -58,7 +58,7 @@ func TestSafeguardsRequestBuilders(t *testing.T) {
 						if !slices.Contains(betas, beta) {
 							t.Errorf("missing required beta: %v", betas)
 						}
-						if provider == schemas.Bedrock || provider == schemas.Vertex {
+						if provider == schemas.Bedrock {
 							if !strings.Contains(providerUtils.GetJSONField(out, "anthropic_beta").Raw, beta) {
 								t.Errorf("missing body beta: %s", out)
 							}
@@ -352,14 +352,14 @@ func TestBuildAnthropicResponsesRequestBody_RawBodyPath(t *testing.T) {
 		})
 
 		request := &schemas.BifrostResponsesRequest{
-			Provider:       schemas.Vertex,
-			Model:          "claude-sonnet-4-5",
-			RawRequestBody: []byte(`{"model":"claude-sonnet-4-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}`),
+			Provider:       schemas.Bedrock,
+			Model:          "us.anthropic.claude-sonnet-4-5",
+			RawRequestBody: []byte(`{"model":"us.anthropic.claude-sonnet-4-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}`),
 		}
 
 		result, err := BuildAnthropicResponsesRequestBody(ctx, request, AnthropicRequestBuildConfig{
-			Provider: schemas.Vertex,
-			Model:    "claude-sonnet-4-5",
+			Provider: schemas.Bedrock,
+			Model:    "us.anthropic.claude-sonnet-4-5",
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -367,6 +367,52 @@ func TestBuildAnthropicResponsesRequestBody_RawBodyPath(t *testing.T) {
 
 		if !providerUtils.JSONFieldExists(result, "anthropic_beta") {
 			t.Error("expected anthropic_beta to be injected into body")
+		}
+	})
+
+	// Vertex ignores the anthropic_beta body field and 400s on values it does not list
+	// (inline-tools-2026-09-15, verified live 2026-11-11); betas go in the header only.
+	t.Run("vertex keeps betas out of the body", func(t *testing.T) {
+		ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+		ctx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
+		raw := []byte(`{"model":"claude-opus-5-5","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"get_weather","input_schema":{"type":"object"}}}}]}]}`)
+		if err := AddMissingBetaHeadersToContextFromRawBody(ctx, raw, schemas.Vertex); err != nil {
+			t.Fatalf("AddMissingBetaHeadersToContextFromRawBody: %v", err)
+		}
+		request := &schemas.BifrostResponsesRequest{Provider: schemas.Vertex, Model: "claude-opus-5-5", RawRequestBody: raw}
+		result, bErr := BuildAnthropicResponsesRequestBody(ctx, request, AnthropicRequestBuildConfig{Provider: schemas.Vertex, Model: "claude-opus-5-5"})
+		if bErr != nil {
+			t.Fatalf("unexpected error: %v", bErr)
+		}
+		if providerUtils.JSONFieldExists(result, "anthropic_beta") {
+			t.Errorf("anthropic_beta must not be in the Vertex body: %s", result)
+		}
+		header := FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), schemas.Vertex)
+		for _, want := range []string{AnthropicMidConversationToolChangesBetaHeader, AnthropicInlineToolsBetaHeader} {
+			if !slices.Contains(header, want) {
+				t.Errorf("anthropic-beta header lost %s: %v", want, header)
+			}
+		}
+	})
+
+	// Bedrock InvokeModel only reads betas from the body, so inline-tools must stay there.
+	t.Run("inline-tools stays in the Bedrock InvokeModel body", func(t *testing.T) {
+		ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+		ctx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
+		raw := []byte(`{"model":"us.anthropic.claude-opus-5-5","max_tokens":64,"messages":[{"role":"user","content":"hi"},{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"get_weather","input_schema":{"type":"object"}}}}]}]}`)
+		if err := AddMissingBetaHeadersToContextFromRawBody(ctx, raw, schemas.Bedrock); err != nil {
+			t.Fatalf("AddMissingBetaHeadersToContextFromRawBody: %v", err)
+		}
+		request := &schemas.BifrostResponsesRequest{Provider: schemas.Bedrock, Model: "us.anthropic.claude-opus-5-5", RawRequestBody: raw}
+		result, bErr := BuildAnthropicResponsesRequestBody(ctx, request, AnthropicRequestBuildConfig{Provider: schemas.Bedrock, Model: "us.anthropic.claude-opus-5-5"})
+		if bErr != nil {
+			t.Fatalf("unexpected error: %v", bErr)
+		}
+		betas := providerUtils.GetJSONField(result, "anthropic_beta").Raw
+		for _, want := range []string{AnthropicMidConversationToolChangesBetaHeader, AnthropicInlineToolsBetaHeader} {
+			if !strings.Contains(betas, want) {
+				t.Errorf("anthropic_beta body field lost %s: %s", want, betas)
+			}
 		}
 	})
 }
@@ -1694,9 +1740,13 @@ func TestBuildAnthropicRequestBody_DefaultEagerInputStreaming(t *testing.T) {
 				if tc.provider == schemas.Anthropic {
 					return
 				}
-				var betas []string
-				for _, b := range providerUtils.GetJSONField(body, "anthropic_beta").Array() {
-					betas = append(betas, b.String())
+				// Bedrock InvokeModel reads betas from the body; Vertex from the anthropic-beta header.
+				betas := FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), tc.provider)
+				if tc.provider == schemas.Bedrock {
+					betas = nil
+					for _, b := range providerUtils.GetJSONField(body, "anthropic_beta").Array() {
+						betas = append(betas, b.String())
+					}
 				}
 				if hasBeta := slices.Contains(betas, AnthropicEagerInputStreamingBetaHeader); hasBeta != tc.wantEager {
 					t.Errorf("anthropic_beta = %v, want fine-grained beta present=%v", betas, tc.wantEager)

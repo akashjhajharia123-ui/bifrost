@@ -3663,9 +3663,11 @@ func TestStripUnsupportedFieldsFromRawBody_ToolChangeBlocks(t *testing.T) {
 		provider schemas.ModelProvider
 		ships    bool
 	}{
-		{schemas.Vertex, false},
-		{schemas.Bedrock, false},
-		{schemas.Azure, false},
+		{schemas.DeepSeek, false},
+		{schemas.Fireworks, false},
+		{schemas.Vertex, true},
+		{schemas.Bedrock, true},
+		{schemas.Azure, true},
 		{schemas.Anthropic, true},
 		{schemas.BedrockMantle, true},
 	} {
@@ -3691,7 +3693,7 @@ func TestStripUnsupportedFieldsFromRawBody_ToolChangeBlocks(t *testing.T) {
 }
 
 // BenchmarkStripUnsupportedFieldsFromRawBody_ToolChangeBlocks measures the strip on a
-// 400-turn Claude Code body for Vertex: the common case (nothing to strip, which pays only
+// 400-turn Claude Code body for a provider without the beta (DeepSeek): the common case (nothing to strip, which pays only
 // the byte prefilter) and one carrying a system message with a tool_addition block.
 func BenchmarkStripUnsupportedFieldsFromRawBody_ToolChangeBlocks(b *testing.B) {
 	build := func(withToolChange bool) []byte {
@@ -3719,7 +3721,7 @@ func BenchmarkStripUnsupportedFieldsFromRawBody_ToolChangeBlocks(b *testing.B) {
 		b.Run(bc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := StripUnsupportedFieldsFromRawBody(bc.body, schemas.Vertex, "claude-opus-5-5"); err != nil {
+				if _, err := StripUnsupportedFieldsFromRawBody(bc.body, schemas.DeepSeek, "claude-opus-5-5"); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -5140,9 +5142,11 @@ func TestMidConversationToolChangesBetaHeaderRouting(t *testing.T) {
 	}{
 		{schemas.Anthropic, true},
 		{schemas.BedrockMantle, true},
-		{schemas.Bedrock, false},
-		{schemas.Vertex, false},
-		{schemas.Azure, false},
+		{schemas.Bedrock, true},
+		{schemas.Vertex, true},
+		{schemas.Azure, true},
+		{schemas.DeepSeek, false},
+		{schemas.Fireworks, false},
 	} {
 		t.Run(string(tc.provider), func(t *testing.T) {
 			t.Parallel()
@@ -5971,11 +5975,20 @@ func TestAddMissingBetaHeaders_ToolChangesInjectBetas(t *testing.T) {
 	}
 	t.Run("dropped where the provider lacks the feature", func(t *testing.T) {
 		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-		if err := AddMissingBetaHeadersToContextFromRawBody(ctx, []byte(corpus["tool_addition with an inline tool_definition"]), schemas.Vertex); err != nil {
+		if err := AddMissingBetaHeadersToContextFromRawBody(ctx, []byte(corpus["tool_addition with an inline tool_definition"]), schemas.DeepSeek); err != nil {
 			t.Fatalf("AddMissingBetaHeadersToContextFromRawBody: %v", err)
 		}
-		check(t, FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), schemas.Vertex), false, false)
+		check(t, FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), schemas.DeepSeek), false, false)
 	})
+	for _, provider := range []schemas.ModelProvider{schemas.Vertex, schemas.Bedrock, schemas.Azure} {
+		t.Run("kept on "+string(provider), func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			if err := AddMissingBetaHeadersToContextFromRawBody(ctx, []byte(corpus["tool_addition with an inline tool_definition"]), provider); err != nil {
+				t.Fatalf("AddMissingBetaHeadersToContextFromRawBody: %v", err)
+			}
+			check(t, FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), provider), true, true)
+		})
+	}
 }
 
 // TestDefaultSupportsMidConversationSystem_ModelList pins the documented model list for

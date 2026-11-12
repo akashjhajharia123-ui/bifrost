@@ -780,8 +780,7 @@ func StripUnsupportedFieldsFromRawBody(jsonBody []byte, provider schemas.ModelPr
 
 	// tool_addition / tool_removal blocks — mid-conversation tool changes (beta
 	// mid-conversation-tool-changes). Claude Code sends them in role:"system" messages, and a
-	// surface without the beta rejects the unknown content block (Vertex: "Input tag
-	// 'tool_addition' found using 'type' does not match any of the expected tags"). They are
+	// surface without the beta rejects the unknown content block. They are
 	// removed, as is a replayed compaction block's tool_changes; the text next to them stays,
 	// and a message left with no content is dropped whole rather than sent empty.
 	//
