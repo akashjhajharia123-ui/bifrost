@@ -63,6 +63,7 @@ func TestVertex(t *testing.T) {
 		ImageGenerationModel:     "gemini-2.5-flash-image",
 		ImageEditModel:           "gemini-2.5-flash-image",
 		VideoGenerationModel:     "veo-3.1-generate-preview",
+		RealtimeModel:            "gemini-3.8-live",
 		FileStorageConfig:        fileStorageConfig,
 		BatchOutputFolder:        batchOutputFolder,
 		Scenarios: llmtests.TestScenarios{
@@ -108,6 +109,7 @@ func TestVertex(t *testing.T) {
 			FileContent:                  true,
 			FileBatchInput:               true,
 			BatchCreate:                  true,
+			Realtime:                     true, // gemini-3.8-live through the translated Live protocol
 			BatchList:                    true,
 			BatchRetrieve:                true,
 			BatchCancel:                  true,
