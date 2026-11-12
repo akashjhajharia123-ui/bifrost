@@ -3,6 +3,7 @@ package schemas
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -2816,5 +2817,106 @@ func TestResponsesToolToChatTool_CustomToolKeepsNameAndDescription(t *testing.T)
 		if !strings.Contains(string(out), `"name":"ApplyPatch"`) || !strings.Contains(string(out), `"description":"Apply a patch"`) {
 			t.Fatalf("ToChatTool(%s) = %s, want name and description inside custom", in, out)
 		}
+	}
+}
+
+// Chat logprobs must survive the chat -> Responses conversion, which carries them
+// as an include entry rather than a boolean.
+func TestToResponsesRequest_LogProbsAddsInclude(t *testing.T) {
+	cases := []struct {
+		name     string
+		logprobs *bool
+		want     bool
+	}{
+		{name: "true", logprobs: Ptr(true), want: true},
+		{name: "false", logprobs: Ptr(false), want: false},
+		{name: "unset", logprobs: nil, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			brr := (&BifrostChatRequest{
+				Model:  "gpt-6-luna",
+				Params: &ChatParameters{LogProbs: tc.logprobs, TopLogProbs: Ptr(2)},
+			}).ToResponsesRequest()
+			got := slices.Contains(brr.Params.Include, ResponsesIncludeOutputTextLogProbs)
+			if got != tc.want {
+				t.Fatalf("include %q present = %v, want %v (include=%v)", ResponsesIncludeOutputTextLogProbs, got, tc.want, brr.Params.Include)
+			}
+			if brr.Params.TopLogProbs == nil || *brr.Params.TopLogProbs != 2 {
+				t.Fatalf("expected top_logprobs 2, got %v", brr.Params.TopLogProbs)
+			}
+		})
+	}
+}
+
+func responsesTextOutputWithLogProbs(text string, logprobs []ResponsesOutputMessageContentTextLogProb) []ResponsesMessage {
+	out := responsesTextOutput(text)
+	out[0].Content.ContentBlocks[0].ResponsesOutputMessageContentText = &ResponsesOutputMessageContentText{LogProbs: logprobs}
+	return out
+}
+
+func TestToBifrostChatResponse_MapsOutputTextLogProbs(t *testing.T) {
+	logprobs := []ResponsesOutputMessageContentTextLogProb{
+		{Bytes: []int{72, 105}, LogProb: -0.0001, Token: "Hi", TopLogProbs: []LogProb{{Bytes: []int{72, 105}, LogProb: -0.0001, Token: "Hi"}}},
+		{Bytes: []int{33}, LogProb: -0.00002, Token: "!", TopLogProbs: []LogProb{{Bytes: []int{33}, LogProb: -0.00002, Token: "!"}}},
+	}
+	chatResp := (&BifrostResponsesResponse{
+		Status: Ptr(ResponsesResponseStatusCompleted),
+		Output: responsesTextOutputWithLogProbs("Hi!", logprobs),
+	}).ToBifrostChatResponse()
+
+	if chatResp == nil || len(chatResp.Choices) != 1 {
+		t.Fatalf("expected one choice, got %+v", chatResp)
+	}
+	lp := chatResp.Choices[0].LogProbs
+	if lp == nil {
+		t.Fatal("expected choices[0].logprobs to be set")
+	}
+	want := []ContentLogProb{
+		{Bytes: []int{72, 105}, LogProb: -0.0001, Token: "Hi", TopLogProbs: []LogProb{{Bytes: []int{72, 105}, LogProb: -0.0001, Token: "Hi"}}},
+		{Bytes: []int{33}, LogProb: -0.00002, Token: "!", TopLogProbs: []LogProb{{Bytes: []int{33}, LogProb: -0.00002, Token: "!"}}},
+	}
+	if !reflect.DeepEqual(lp.Content, want) {
+		t.Fatalf("logprobs.content mismatch:\n got %+v\nwant %+v", lp.Content, want)
+	}
+}
+
+// OpenAI echoes "logprobs": [] on every text block, requested or not; that must
+// stay null on the chat side, as it is on a native chat completion.
+func TestToBifrostChatResponse_EmptyOutputTextLogProbsStayNull(t *testing.T) {
+	chatResp := (&BifrostResponsesResponse{
+		Status: Ptr(ResponsesResponseStatusCompleted),
+		Output: responsesTextOutputWithLogProbs("Hi!", []ResponsesOutputMessageContentTextLogProb{}),
+	}).ToBifrostChatResponse()
+
+	if chatResp == nil || len(chatResp.Choices) != 1 {
+		t.Fatalf("expected one choice, got %+v", chatResp)
+	}
+	if chatResp.Choices[0].LogProbs != nil {
+		t.Fatalf("expected nil logprobs, got %+v", chatResp.Choices[0].LogProbs)
+	}
+}
+
+func TestResponsesStreamToBifrostChatResponse_MapsOutputTextDeltaLogProbs(t *testing.T) {
+	chunk := &BifrostResponsesStreamResponse{
+		Type:  ResponsesStreamResponseTypeOutputTextDelta,
+		Delta: Ptr("Hi"),
+		LogProbs: []ResponsesOutputMessageContentTextLogProb{
+			{Bytes: []int{72, 105}, LogProb: -0.0001, Token: "Hi", TopLogProbs: []LogProb{}},
+		},
+	}
+
+	resp := chunk.ToBifrostChatResponse()
+	if resp == nil || len(resp.Choices) != 1 {
+		t.Fatalf("expected one choice, got %+v", resp)
+	}
+	lp := resp.Choices[0].LogProbs
+	if lp == nil || len(lp.Content) != 1 || lp.Content[0].Token != "Hi" || lp.Content[0].LogProb != -0.0001 {
+		t.Fatalf("expected delta logprobs for token Hi, got %+v", lp)
+	}
+
+	chunk.LogProbs = []ResponsesOutputMessageContentTextLogProb{}
+	if resp := chunk.ToBifrostChatResponse(); resp.Choices[0].LogProbs != nil {
+		t.Fatalf("expected nil logprobs for an empty delta list, got %+v", resp.Choices[0].LogProbs)
 	}
 }

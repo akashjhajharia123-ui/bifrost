@@ -1405,6 +1405,10 @@ func (cr *BifrostChatRequest) ToResponsesRequest() *BifrostResponsesRequest {
 			Metadata:        cr.Params.Metadata,
 		}
 
+		if cr.Params.LogProbs != nil && *cr.Params.LogProbs {
+			brr.Params.Include = []string{ResponsesIncludeOutputTextLogProbs}
+		}
+
 		// Convert StreamOptions
 		if cr.Params.StreamOptions != nil {
 			brr.Params.StreamOptions = &ResponsesStreamOptions{
@@ -1794,6 +1798,43 @@ func (cr *BifrostChatResponse) ToBifrostResponsesResponse() *BifrostResponsesRes
 	return responsesResp
 }
 
+// ResponsesIncludeOutputTextLogProbs is the Responses include entry that returns token logprobs.
+const ResponsesIncludeOutputTextLogProbs = "message.output_text.logprobs"
+
+// chatLogProbsFromResponsesOutput collects output_text token logprobs across assistant messages.
+func chatLogProbsFromResponsesOutput(output []ResponsesMessage) *BifrostLogProbs {
+	var content []ContentLogProb
+	for _, msg := range output {
+		if msg.Type == nil || *msg.Type != ResponsesMessageTypeMessage || msg.Content == nil {
+			continue
+		}
+		for _, block := range msg.Content.ContentBlocks {
+			if block.ResponsesOutputMessageContentText == nil {
+				continue
+			}
+			for _, lp := range block.ResponsesOutputMessageContentText.LogProbs {
+				content = append(content, ContentLogProb(lp))
+			}
+		}
+	}
+	if len(content) == 0 {
+		return nil
+	}
+	return &BifrostLogProbs{Content: content}
+}
+
+// chatLogProbsFromTextLogProbs converts one output_text block's logprobs; empty yields nil.
+func chatLogProbsFromTextLogProbs(logprobs []ResponsesOutputMessageContentTextLogProb) *BifrostLogProbs {
+	if len(logprobs) == 0 {
+		return nil
+	}
+	content := make([]ContentLogProb, len(logprobs))
+	for i, lp := range logprobs {
+		content[i] = ContentLogProb(lp)
+	}
+	return &BifrostLogProbs{Content: content}
+}
+
 // ToBifrostChatResponse converts a BifrostResponsesResponse to BifrostChatResponse format
 // This converts Responses API format to Chat-style fields (Choices)
 func (responsesResp *BifrostResponsesResponse) ToBifrostChatResponse() *BifrostChatResponse {
@@ -1836,6 +1877,10 @@ func (responsesResp *BifrostResponsesResponse) ToBifrostChatResponse() *BifrostC
 				},
 			}
 			choices = append(choices, choice)
+		}
+
+		if len(choices) > 0 {
+			choices[0].LogProbs = chatLogProbsFromResponsesOutput(responsesResp.Output)
 		}
 
 		chatResp.Choices = choices
@@ -2757,7 +2802,8 @@ func (rsr *BifrostResponsesStreamResponse) ToBifrostChatResponse() *BifrostChatR
 	case ResponsesStreamResponseTypeOutputTextDelta:
 		resp.Choices = []BifrostResponseChoice{
 			{
-				Index: 0,
+				Index:    0,
+				LogProbs: chatLogProbsFromTextLogProbs(rsr.LogProbs),
 				ChatStreamResponseChoice: &ChatStreamResponseChoice{
 					Delta: &ChatStreamResponseChoiceDelta{
 						Content: rsr.Delta,
