@@ -4085,6 +4085,49 @@ func TestToOpenAIResponsesRequest_AlwaysReasoningModels(t *testing.T) {
 		require.Nil(t, req.Temperature, "gpt-5.5 defaults to medium")
 	})
 
+	t.Run("mantle_follows_effort_conditions", func(t *testing.T) {
+		const model = "openai.gpt-6-luna"
+		installCapabilityRecord(t, model, &schemas.ModelCapabilities{
+			DefaultReasoningEffort:   schemas.Ptr(schemas.ReasoningEffortMedium),
+			SupportsReasoningDisable: new(true),
+			ConditionallyUnsupportedFields: map[string]string{
+				schemas.FieldTemperature: schemas.ConditionWhenEffortNone,
+				schemas.FieldTopP:        schemas.ConditionWhenEffortNone,
+				schemas.FieldLogprobs:    schemas.ConditionWhenEffortNone,
+				schemas.FieldTopLogprobs: schemas.ConditionWhenEffortNone,
+			},
+		})
+		params := func(effort string) *schemas.ResponsesParameters {
+			p := &schemas.ResponsesParameters{
+				Temperature: schemas.Ptr(0.5),
+				TopLogProbs: schemas.Ptr(2),
+				Include:     []string{schemas.ResponsesIncludeOutputTextLogProbs},
+			}
+			if effort != "" {
+				p.Reasoning = &schemas.ResponsesParametersReasoning{Effort: schemas.Ptr(effort)}
+			}
+			return p
+		}
+		for _, effort := range []string{"low", ""} {
+			req := convert(schemas.BedrockMantle, model, params(effort))
+			require.Nil(t, req.Temperature, "effort %q", effort)
+			require.Nil(t, req.TopLogProbs, "effort %q", effort)
+			require.Empty(t, req.Include, "effort %q", effort)
+		}
+		req := convert(schemas.BedrockMantle, model, params("none"))
+		require.NotNil(t, req.Temperature)
+		require.NotNil(t, req.TopLogProbs)
+		require.Equal(t, []string{schemas.ResponsesIncludeOutputTextLogProbs}, req.Include)
+	})
+
+	t.Run("mantle_gpt_oss_keeps_temperature", func(t *testing.T) {
+		req := convert(schemas.BedrockMantle, "openai.gpt-oss-120b", &schemas.ResponsesParameters{
+			Temperature: schemas.Ptr(0.2),
+			Reasoning:   &schemas.ResponsesParametersReasoning{Effort: schemas.Ptr("low")},
+		})
+		require.NotNil(t, req.Temperature)
+	})
+
 	t.Run("third_party_gpt_oss_keeps_temperature", func(t *testing.T) {
 		req := convert(schemas.Groq, "openai/gpt-oss-120b", &schemas.ResponsesParameters{Temperature: schemas.Ptr(0.2)})
 		require.NotNil(t, req.Temperature)
